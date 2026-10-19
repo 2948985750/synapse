@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Synapse</title>
+<style>
+  :root {
+    --bg: #fafafa; --card: #fff; --fg: #222; --muted: #888; --line: #e8e8e8;
+    --accent: #1a56db;
+    --ok: #16a34a; --err: #d92d2d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16181d; --card: #1f2228; --fg: #e6e6e6; --muted: #8b8f98; --line: #2c3038;
+            --accent: #4f83ff; --ok: #34c370; --err: #f26363; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  header {
+    padding: 12px 14px 10px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  header h1 { font-size: 13px; font-weight: 600; margin: 0; }
+  header p { font-size: 11px; color: var(--muted); margin: 0; }
+  header .state { margin-left: auto; font-size: 11px; color: var(--muted); }
+  header .state.ok { color: var(--ok); }
+
+  .wrap { padding: 10px 14px 14px; display: grid; gap: 14px; }
+
+  section h2 {
+    font-size: 11px; font-weight: 600; color: var(--muted);
+    margin: 0 0 8px;
+  }
+
+  button {
+    font: inherit; padding: 5px 12px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--card); color: var(--fg);
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.primary { border-color: var(--accent); color: var(--accent); font-weight: 500; }
+
+  input, select {
+    font: inherit; padding: 5px 9px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--card); color: var(--fg); width: 100%;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+
+  .row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .row > * { flex: 1; }
+  .row button { flex: 1; }
+
+  .list {
+    font: 11px/1.7 ui-monospace, Consolas, monospace;
+    max-height: 160px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+    color: var(--fg);
+  }
+  .hint { font-size: 11px; color: var(--muted); margin: 0 0 8px; }
+  .err { color: var(--err); }
+</style>
+</head>
+<body>
+<header>
+  <h1>CDP 控制台</h1>
+  <p>Synapse</p>
+  <span class="state" id="state">未连接</span>
+</header>
+
+<div class="wrap">
+  <section>
+    <h2>浏览器与本机工具配对</h2>
+    <p class="hint">首次使用：运行 <code>node extension/native-host/agent-collect.js pair</code>，将显示的配对码填入下方。随后运行 <code>serve</code>。</p>
+    <div class="row">
+      <input id="in-token" type="password" autocomplete="off" spellcheck="false" aria-label="配对码" placeholder="64 位配对码" />
+      <button id="btn-pair">保存配对</button>
+    </div>
+    <p class="hint" id="pair-result" role="status"></p>
+  </section>
+  <section>
+    <h2>CDP 调用</h2>
+    <div class="row">
+      <select id="in-tab"><option value="">选择标签…</option></select>
+    </div>
+    <div class="row">
+      <input id="in-method" placeholder="方法，如 Runtime.evaluate" />
+    </div>
+    <div class="row">
+      <input id="in-params" placeholder='参数 JSON，如 {"expression":"document.title"}' />
+    </div>
+    <div class="row">
+      <button id="btn-cdp" class="primary">运行</button>
+    </div>
+    <p class="hint">点运行时自动附加该标签，跑完自动分离。</p>
+    <div class="list" id="cdp-result"></div>
+  </section>
+</div>
+<script src="panel.js"></script>
+</body>
+</html>
