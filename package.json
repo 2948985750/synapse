@@ -1,0 +1,10 @@
+{
+  "name": "cdp-browser",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Browser CDP control via a Chrome/Edge extension + native messaging host (full CDP passthrough, per-tab concurrency, login state reuse).",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node extension/src/test-tablock.js && node extension/src/test-background.js && node extension/native-host/test-bridge.js"
+  }
+}
