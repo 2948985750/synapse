@@ -1,0 +1,55 @@
+# 变更记录
+
+本文件记录**修复过的问题**与结构性变更，重点写「为什么改成这样」。
+agent 侧（CLI / 桥 / 路由 / 鉴权）在独立仓库 [synapse-skill](https://github.com/2948985750/synapse-skill)。
+
+---
+
+## 2026-10-22
+
+### 仓库拆分
+
+- **变更**：本仓库只保留浏览器扩展（`extension/`）与商店发布工具；agent 侧整体移到 `synapse-skill`。
+- **原因**：node 代码原来塞在 `extension/native-host/` 下，看起来像扩展的一部分，实际
+  `extension/store/build-store.js` 一直把它排除在商店包外。两套东西放一棵树里，导致
+  「扩展要发布」和「桥要迭代」互相干扰。
+- **兼容**：扩展与 agent 之间只有 WS 协议（`wb-cdp-ws/2`，端口 9521-9540），拆开不影响运行。
+- 提交 `77fcc23`
+
+### 修复：`package.json` 名称与测试路径错误
+
+- **现象**：`npm test` 直接失败。
+- **根因**：拆分前的 `package.json` 还叫 `cdp-browser`，测试脚本指向
+  `extension/native-host/test-bridge.js` —— 该路径在重构后已不存在。
+- **修法**：改名 `synapse`，测试只跑扩展（`test-tablock` + `test-background`），
+  另加 `test:ws-auth` 与 `build:store`。
+
+### 修复：侧边栏配对提示指向了不存在的路径
+
+- **现象**：用户照侧边栏提示敲命令会报「找不到文件」。
+- **根因**：文案写着 `node extension/native-host/agent-collect.js pair`，拆分后该目录已移除。
+- **修法**：改为指向 `synapse-skill` 仓库的 `agent/agent-collect.js`。
+- 提交 `77fcc23`
+
+### 文档
+
+- README 重写为扩展视角：目录说明、权限与隐私表（每个权限为什么需要）、商店构建步骤、
+  与 agent 仓库的关系。
+- 提交 `77fcc23`
+
+---
+
+## 拆分前的相关修复（历史，提交仍在）
+
+- `e02d00d`：修掉远端遗留硬伤 —— `package.json` 还叫 `cdp-browser`；`native-host/` 更名为
+  `agent/`（原名字指已废弃的 native messaging 通道，而 README 自己写着「无 native-messaging」）。
+- `a4e5c2f`：agent 侧的 4 个缺陷（清理超时、`lateStarts` 上限、`crypto` 未引入、
+  `--filter` 错误码），详见 synapse-skill 的 CHANGELOG。
+- `525d778`：agent 侧单文件 1677 行拆成 9 个模块 + 原子写 + 命令表。
+
+---
+
+## 已知待办
+
+- **商店 zip 落后于源码**：`extension/src/sidepanel/index.html` 在 `77fcc23` 改过，
+  发布前需重跑 `npm run build:store` 并重新打包。
