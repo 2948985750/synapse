@@ -46,6 +46,21 @@
 | `agent/paths.js` | 路径集中解析（`WB_*` 环境变量） |
 | `package.json` | `npm test` / `npm run verify` |
 
+`agent/` 内部按职责拆分（2026-10 重构，原单文件 1677 行 → 300 行级模块）：
+
+| 模块 | 内容 |
+|---|---|
+| `agent-collect.js` | 入口：serve/keep 常驻桥、main 调度、对外导出（测试依赖此文件） |
+| `cli.js` | 参数解析与命令构造（纯函数，不碰网络/文件） |
+| `commands.js` | 命令清单唯一来源，`usage()` 由它渲染 |
+| `transport.js` | WS 连接、桥级联故障转移、命令执行 |
+| `capture.js` | 网络响应体捕获的结果整形与多标签编排 |
+| `doctor.js` | 链路体检 + 协调恢复（唯一碰 Windows 细节的模块） |
+| `registry.js` | 桥发现记录（注册表 / 遗留单文件） |
+| `config.js` | 端口段、命令超时、探测时限、锁 TTL |
+| `lib/json-store.js` | JSON 读写 + **原子写**（tmp + rename） |
+| `lib/ui.js` | stdout JSON 出口与错误归一化 |
+
 cdp skill 通过 `cdp/scripts/lib/bridge.js` 引用本仓库的 `agent/`，不保存副本。
 
 ## 快速开始（本地 unpacked）

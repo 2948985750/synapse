@@ -50,7 +50,11 @@ function resolveExtDir() {
   if (process.env.WB_CDP_EXT_DIR) {
     const dir = path.resolve(process.env.WB_CDP_EXT_DIR);
     if (!fs.existsSync(path.join(dir, "manifest.json"))) {
-      throw new Error("WB_CDP_EXT_DIR=" + dir + " 下没有 manifest.json（应指向含 manifest.json 的扩展根目录，不是 src/ 等子目录）");
+      throw new Error(
+        "WB_CDP_EXT_DIR=" +
+          dir +
+          " 下没有 manifest.json（应指向含 manifest.json 的扩展根目录，不是 src/ 等子目录）",
+      );
     }
     return dir;
   }
@@ -64,8 +68,17 @@ function resolveExtDir() {
   }
   throw new Error(
     "找不到 unpacked 扩展根目录。doctor 硬刷需要 WB_CDP_EXT_DIR 指向含 manifest.json 的目录" +
-    "（候选：" + candidates.join(" | ") + "）"
+      "（候选：" +
+      candidates.join(" | ") +
+      "）",
   );
 }
 
-module.exports = { SKILL_ROOT, SKILLS_DIR, DATA_ROOT, BRIDGE_DIR, BRIDGE_FILE, resolveExtDir };
+module.exports = {
+  SKILL_ROOT,
+  SKILLS_DIR,
+  DATA_ROOT,
+  BRIDGE_DIR,
+  BRIDGE_FILE,
+  resolveExtDir,
+};

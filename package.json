@@ -5,9 +5,10 @@
   "description": "Synapse: drive an already-running, already-logged-in Chrome/Edge from an AI agent. MV3 extension (chrome.debugger full CDP passthrough) + an agent-side loopback WebSocket bridge.",
   "type": "commonjs",
   "scripts": {
-    "test": "node extension/src/test-tablock.js && node extension/src/test-background.js && node agent/test-bridge.js",
+    "test": "node extension/src/test-tablock.js && node extension/src/test-background.js && node agent/test-bridge.js && node agent/test-commands.js",
     "test:ws-auth": "node extension/src/test-ws-auth.js",
     "test:agent": "node agent/test-bridge.js",
+    "test:commands": "node agent/test-commands.js",
     "verify": "node --check agent/agent-collect.js && npm test"
   }
 }
