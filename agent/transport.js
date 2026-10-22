@@ -1,5 +1,6 @@
 "use strict";
 // transport：WS 连接、桥级联故障转移、命令执行。
+const crypto = require("crypto");
 const { WebSocketServer, WebSocket } = require("./vendor/ws");
 const { authenticateClient, authenticateServer } = require("./bridge-auth");
 const { failReply, failEvaluation } = require("./lib/ui");

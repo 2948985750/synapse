@@ -4,6 +4,14 @@ const crypto = require("crypto");
 
 // This router only receives sockets after mutual authentication has completed.
 // Deadlines limit dispatch; a timeout cannot undo a command already executed.
+
+// 清理确认的超时：扩展收到 client.disconnect 后若 SW 被挂起（MV3 空闲 30s 即挂），
+// 不回包就会让这条 socket 永久停在 cleaning=true 并留在 clients 里 —— 常驻 serve
+// 跑几天会攒下一堆僵尸连接。超时后按"未确认"处理并释放身份。
+const CLEANUP_TIMEOUT_MS = 5000;
+// lateStarts 是"超时后才回来的 capture.start"的补偿队列，必须有上限。
+const LATE_STARTS_MAX = 200;
+
 function createBridgeRouter({
   now = Date.now,
   setTimer = setTimeout,
@@ -35,14 +43,16 @@ function createBridgeRouter({
     if (reply)
       send(entry.socket, { ...reply, type: "agent.result", id: entry.id });
   }
+  function rememberLateStart(wireId, command) {
+    lateStarts.set(wireId, command);
+    while (lateStarts.size > LATE_STARTS_MAX)
+      lateStarts.delete(lateStarts.keys().next().value);
+  }
   function expire(entry) {
     if (entry.dispatched) {
       send(extension, { type: "cancel", id: entry.wireId });
-      if (entry.command.cmd === "capture.start") {
-        lateStarts.set(entry.wireId, entry.command);
-        if (lateStarts.size > 200)
-          lateStarts.delete(lateStarts.keys().next().value);
-      }
+      if (entry.command.cmd === "capture.start")
+        rememberLateStart(entry.wireId, entry.command);
     }
     finish(entry, {
       ok: false,
@@ -191,6 +201,7 @@ function createBridgeRouter({
       const cleanup = cleanups.get(message.id);
       if (cleanup) {
         cleanups.delete(message.id);
+        if (cleanup.timer) clearTimer(cleanup.timer);
         clients.delete(cleanup.socket);
         if (cleanup.replyId)
           send(cleanup.socket, { ...message, id: cleanup.replyId });
@@ -277,7 +288,7 @@ function createBridgeRouter({
         if (entry.dispatched) {
           send(extension, { type: "cancel", id: entry.wireId });
           if (entry.command.cmd === "capture.start")
-            lateStarts.set(entry.wireId, entry.command);
+            rememberLateStart(entry.wireId, entry.command);
         }
         finish(entry);
       }
@@ -298,7 +309,21 @@ function createBridgeRouter({
       return;
     }
     const id = crypto.randomUUID();
-    cleanups.set(id, { socket, client, replyId });
+    const timer = setTimer(() => {
+      if (!cleanups.has(id)) return;
+      cleanups.delete(id);
+      clients.delete(socket);
+      if (replyId)
+        send(socket, {
+          type: "agent.result",
+          id: replyId,
+          ok: false,
+          error: "Client cleanup was not acknowledged in time",
+          code: "CLEANUP_TIMEOUT",
+        });
+    }, CLEANUP_TIMEOUT_MS);
+    if (timer && typeof timer.unref === "function") timer.unref();
+    cleanups.set(id, { socket, client, replyId, timer });
     send(extension, {
       type: "client.disconnect",
       id,
@@ -323,6 +348,7 @@ function createBridgeRouter({
             code: "EXTENSION_DISCONNECTED",
           });
       for (const cleanup of cleanups.values()) {
+        if (cleanup.timer) clearTimer(cleanup.timer);
         clients.delete(cleanup.socket);
         if (cleanup.replyId)
           send(cleanup.socket, {
@@ -344,6 +370,8 @@ function createBridgeRouter({
     captureOwners.clear();
     earlyEvents.clear();
     lateStarts.clear();
+    for (const cleanup of cleanups.values())
+      if (cleanup.timer) clearTimer(cleanup.timer);
     cleanups.clear();
     clients.clear();
   }

@@ -53,8 +53,16 @@ async function buildCaptureSessionResult(sendCmd, s, events, opts, bodyStore) {
   }
   if (opts.filter) {
     let re;
-    re = new RegExp(opts.filter, "i");
-    if (re) cands = cands.filter((c) => re.test(c.url || ""));
+    try {
+      re = new RegExp(opts.filter, "i");
+    } catch (error) {
+      // 用户给了写坏的正则：给结构化错误码，而不是让原生 SyntaxError 冒到顶层
+      // 变成一个看不出原因的 COMMAND_FAILED。
+      const wrapped = new Error("--filter 不是合法正则：" + error.message);
+      wrapped.code = "INVALID_FILTER";
+      throw wrapped;
+    }
+    cands = cands.filter((c) => re.test(c.url || ""));
   }
   cands.sort((a, b) => (b.size || 0) - (a.size || 0));
   cands = cands.slice(0, 40); // 与 doCapture 一致：最多 40 条
