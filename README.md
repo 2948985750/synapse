@@ -43,9 +43,10 @@
 | `extension/` | MV3 扩展本体（`manifest.json` + `src/` + `icons/`） |
 | `extension/store/` | 商店发布工具（`gen-icons.js`、`build-store.js`、`LISTING.md`） |
 | `agent/` | agent 侧 CLI/桥（`agent-collect.js` + 路由 + 鉴权 + vendored ws） |
-| `agent/paths.js` | 路径集中解析（`WB_*` 环境变量），同一份文件在 cdp 里也能用 |
-| `scripts/sync-cdp-vendor.js` | 把 `agent/` 同步到 cdp skill 的 vendored 位置（带 `--check`） |
+| `agent/paths.js` | 路径集中解析（`WB_*` 环境变量） |
 | `package.json` | `npm test` / `npm run verify` |
+
+cdp skill 通过 `cdp/scripts/lib/bridge.js` 引用本仓库的 `agent/`，不保存副本。
 
 ## 快速开始（本地 unpacked）
 
@@ -96,23 +97,27 @@ doctor`（`--keep / --wait / --force / --dry / --nowait / --sync / --all` 等选
 ```powershell
 npm test              # tablock(8) + background(27) + agent bridge(28)，全部浏览器无关
 npm run test:ws-auth  # 浏览器侧与 node 侧 ws-auth 的互通/重放/伪造测试
-npm run verify        # syntax + npm test + cdp vendored 副本漂移检测
+npm run verify        # syntax + npm test
 ```
 
 ## 与 cdp skill 的关系
 
-cdp skill（`~/.../cdp`）里有一份 `agent/` 的**逐字节副本**，位于
-`cdp/extension/native-host/`——那是历史存放位置，为了不牵动 cdp 里 ~30 处
-`agent-collect.js` 引用而保留。副本由本仓库生成，不要手改：
+**实现只有这一份。** cdp skill（`../cdp`）不保存副本，它通过
+`cdp/scripts/lib/bridge.js` 解析到本仓库的 `agent/agent-collect.js`：
 
-```powershell
-npm run sync-cdp     # 写入 cdp
-npm run check-drift  # 校验（漂移则退出码 1）
+```
+cdp/scripts/lib/bridge.js（全 cdp 唯一知道桥在哪的地方）
+      │  SYNAPSE_AGENT 环境变量
+      │  → 同级 ../synapse-skill/agent/
+      │  → ~/.dsh/skills/synapse{,-skill}/agent/
+      ▼
+本仓库 agent/（唯一实现）
 ```
 
-`agent/paths.js` 靠"向上找 skill 根"适配两种布局，因此同一份文件在
-`<repo>/agent/` 与 `<cdp>/extension/native-host/` 下解析出的 `DATA_ROOT`
-分别指向各自的 `data/`，扩展根都指向 `cdp/extension`，无需任何条件分支。
+因此改 `agent/` 里的任何代码，cdp 立刻生效，**没有同步步骤、也没有漂移可能**。
+代价是 cdp 不能再脱离本仓库单独拷贝（要单独部署就设 `SYNAPSE_AGENT` 指向本仓库）。
+
+cdp 的 `extension/` 仍是它自己的扩展本体，与本仓库的 `extension/` 各自独立。
 
 ## 发布到 Edge 商店
 

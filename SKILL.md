@@ -32,8 +32,9 @@ description: 驱动已运行、已登录的 Chrome/Edge（本机回环 WebSocket
 两侧各有一份 `ws-auth.js` 是唯一合理的重复（浏览器不能 `require` node 模块），由
 `extension/src/test-ws-auth.js` 的互通测试锁住一致性。
 
-`cdp` skill 里的 `extension/native-host/` 是本仓库 `agent/` 的生成副本（历史路径，
-不改 cdp 的引用）：改源 → `npm run sync-cdp`；漂移用 `npm run check-drift` 查。
+`cdp` skill 不保存副本，它通过 `cdp/scripts/lib/bridge.js` 解析到本仓库的
+`agent/agent-collect.js`（`SYNAPSE_AGENT` → 同级 `../synapse-skill/agent/` → `~/.dsh/skills/`）。
+所以改这里 cdp 立刻生效，无同步步骤；代价是 cdp 不能脱离本仓库单独拷贝。
 
 ## 用法
 

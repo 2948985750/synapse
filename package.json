@@ -8,8 +8,6 @@
     "test": "node extension/src/test-tablock.js && node extension/src/test-background.js && node agent/test-bridge.js",
     "test:ws-auth": "node extension/src/test-ws-auth.js",
     "test:agent": "node agent/test-bridge.js",
-    "check-drift": "node scripts/sync-cdp-vendor.js --check",
-    "sync-cdp": "node scripts/sync-cdp-vendor.js",
-    "verify": "node --check agent/agent-collect.js && npm test && npm run check-drift"
+    "verify": "node --check agent/agent-collect.js && npm test"
   }
 }
