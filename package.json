@@ -2,16 +2,14 @@
   "name": "synapse",
   "version": "0.15.1",
   "private": true,
-  "description": "Synapse: drive an already-running, already-logged-in Chrome/Edge from an AI agent. MV3 extension (chrome.debugger full CDP passthrough) + an agent-side loopback WebSocket bridge.",
+  "description": "Synapse MV3 extension: full CDP passthrough via chrome.debugger over a loopback WebSocket to a local agent bridge. No remote debugging port, no native messaging.",
   "type": "commonjs",
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "test": "node extension/src/test-tablock.js && node extension/src/test-background.js && node agent/test-bridge.js && node agent/test-commands.js && node agent/test-regressions.js",
+    "test": "node extension/src/test-tablock.js && node extension/src/test-background.js",
     "test:ws-auth": "node extension/src/test-ws-auth.js",
-    "test:agent": "node agent/test-bridge.js",
-    "test:commands": "node agent/test-commands.js",
-    "verify": "node --check agent/agent-collect.js && npm test"
+    "build:store": "node extension/store/build-store.js"
   }
 }
