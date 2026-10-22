@@ -1,0 +1,8 @@
+# 统一 LF：vendored 同步是按字节比较的，CRLF 差异会被误判为漂移
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.zip binary
+*.crx binary

@@ -2,9 +2,10 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const auth = require("../src/ws-auth.js");
-const TOKEN_FILE = process.env.WB_BRIDGE_AUTH_FILE || path.join(__dirname, "..", "..", "data", "bridge-auth.json");
-const PAIR_HELP = "Bridge is not paired. Run node extension/native-host/agent-collect.js pair, then enter that token in the extension settings.";
+const auth = require("./ws-auth.js");
+const { DATA_ROOT } = require("./paths.js");
+const TOKEN_FILE = process.env.WB_BRIDGE_AUTH_FILE || path.join(DATA_ROOT, "bridge-auth.json");
+const PAIR_HELP = "Bridge is not paired. Run node agent/agent-collect.js pair, then enter that token in the extension settings.";
 function readToken() {
   // Token 机制已退役：仅限 127.0.0.1 回环，固定使用内置默认密钥，不再读取文件/环境变量。
   return auth.DEFAULT_TOKEN;

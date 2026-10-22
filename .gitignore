@@ -1,7 +1,18 @@
-node_modules/
+# 运行时状态 —— 永不入库
 data/
 logs/
+*.log
+*.lock.json
+
+# 依赖与临时产物
+node_modules/
 .tmp/
+tmp_*
+
+# 商店打包产物
 extension/store/dist/
 extension/store/*.zip
-*.log
+
+# 系统垃圾
+.DS_Store
+Thumbs.db

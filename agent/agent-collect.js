@@ -1,5 +1,8 @@
 "use strict";
-// Authenticated CDP bridge. Requiring this file has no runtime side effects.
+// Synapse agent-side WS bridge (skill 层：跑在 node 里，不在浏览器扩展内).
+// Paths are no longer hard-coded to the skill source dir; they resolve through
+// ./paths.js so WB_DATA_DIR / WB_BRIDGE_FILE / WB_BRIDGE_DIR / WB_CDP_EXT_DIR
+// can point runtime data and the unpacked extension wherever the user wants.
 const { WebSocketServer, WebSocket } = require("./vendor/ws");
 const fs = require("fs");
 const path = require("path");
@@ -7,10 +10,7 @@ const crypto = require("crypto");
 const { execSync, spawn } = require("child_process");
 const { createBridgeRouter } = require("./bridge-router");
 const { readToken, pairToken, authenticateServer, authenticateClient } = require("./bridge-auth");
-const BRIDGE_FILE = process.env.WB_BRIDGE_FILE || path.join(__dirname, "..", "..", "data", "bridge.json");
-// 多会话注册表（T-33）：每个 serve/keep 桥一个条目 data/bridges/<session>.json，
-// 取代"单文件后写者覆盖"；one-shot 按 会话桥 → 其它活桥 → 直连慢路径 级联故障转移。
-const BRIDGE_DIR = process.env.WB_BRIDGE_DIR || path.join(__dirname, "..", "..", "data", "bridges");
+const { BRIDGE_DIR, BRIDGE_FILE, resolveExtDir: _pathsResolveExtDir } = require("./paths");
 const PORT_RANGE_START = Number(process.env.WB_AGENT_WS_START || 9521);
 const PORT_RANGE_END = Number(process.env.WB_AGENT_WS_END || 9540);
 // 50s：扩展端 Runtime.evaluate 有 6s 弹窗重试（最坏 2×timeout+6s，evaluate 类
@@ -806,13 +806,11 @@ function clearSwCaches() {
 // 解析要加载的扩展根目录并校验 manifest.json 存在（T-35 护栏）。
 // 事故：某次把 --load-extension 指到了 extension/src（子目录，无清单）→
 // Edge 启动报「无法加载扩展：清单文件丢失或不可读取」。launch 前必须确认
-// 目标目录确实含 manifest.json，指错一层（src / native-host）立即报错而非带病启动。
+// 目标目录确实含 manifest.json，指错一层（src / 其它子目录）立即报错而非带病启动。
 function resolveExtDir() {
-  const extDir = process.env.WB_CDP_EXT_DIR || path.join(__dirname, "..");
-  if (!fs.existsSync(path.join(extDir, "manifest.json"))) {
-    throw new Error("launchEdge: " + extDir + " 下没有 manifest.json（扩展根目录指错？应指向含 manifest.json 的目录，而不是 src/ 等子目录）");
-  }
-  return extDir;
+  // 独立 skill 形态：扩展本体不在本 skill 内，默认路径由 paths.js 按候选推导
+  // （WB_CDP_EXT_DIR 显式 → ../cdp/extension → ../cdp-browser/extension → 报错）。
+  return _pathsResolveExtDir();
 }
 function launchEdge(exe) {
   const extDir = resolveExtDir();
