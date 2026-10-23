@@ -24,6 +24,16 @@ agent 侧（CLI / 桥 / 路由 / 鉴权）在独立仓库 [synapse-skill](https:
 
 ---
 
+### 工程：版本单一来源校验 + 发布前检查
+
+- 新增 `scripts/verify-version.js`：`extension/manifest.json` 与 `package.json` 的版本必须一致，
+  不一致直接 exit 1。已接进 `npm test`（每次测试都会校验）。
+- 新增 `npm run release:check`：版本校验 + `build:store` 一条命令跑完。
+- 负向验证：把 package.json 改成 9.9.9 → 脚本报「版本不一致」并以 exit 1 退出。
+- 打首个基线 tag `v0.15.1`（此前仓库没有任何 tag）。
+
+---
+
 ## 2026-10-23 — 配对令牌持久化
 
 ### BUG-1 扩展忽略已保存的配对令牌（与 node 侧配对闭环配套）
