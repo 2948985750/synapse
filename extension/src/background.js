@@ -8,7 +8,6 @@
 //   2. Turn leases   — one active "turn" per attached tab; switching turns
 //                      detaches the previous one (clean session bookkeeping
 //                      via chrome.debugger.onDetach).
-//   3. Native brain  — chrome.runtime.connectNative() to a local host
 //                      (the "brain"). The extension is only the hands; the
 //                      brain decides which CDP calls to make. Reconnect with
 //                      backoff + host fallback list.
@@ -31,12 +30,6 @@ function cdpMethodAllowed(method) {
   }
   return true;
 }
-
-// Host fallback order: try each native host until one accepts.
-const NATIVE_HOSTS = [
-  "com.workbuddy.cdpbrain", // production name (register with register-dev.ps1)
-  "com.workbuddy.cdpbrain.dev",
-];
 
 // ---------------- state ----------------
 /** tabId -> { attached, sessionId, turn, targetId } */
@@ -337,11 +330,9 @@ function clearTab(tabId) {
   }
 }
 
-// CDP events from attached targets get forwarded to the brain (best effort;
-// no-op if the brain port is down). All event domains are forwarded — the
-// extension is a full passthrough, and the brain decides what to use.
+// CDP events from attached targets：有 capture 会话的按 event.push 定向推给发起方
+// （见下方 captureSessions 分支），其余事件只用于本地状态维护。
 chrome.debugger.onEvent.addListener((source, method, params) => {
-  brainSend({ type: "cdp.event", source, method, params });
   const tabId = source?.tabId ?? targetByTab.get(source?.targetId);
   if (method === "Page.javascriptDialogOpening" && tabId != null) {
     // 原生弹窗会卡 evaluate 直到超时；立即应答（alert/confirm/prompt 一律
@@ -442,189 +433,10 @@ async function withTabLock(tabId, clientId, fn, lockTimeoutMs = 60000, ctx) {
   }
 }
 
-// ---------------- native brain ----------------
-let nativePort = null;
-let reconnectTimer = null;
-let reconnectMs = 1000;
-let hostIndex = 0;
-
-function nativeHost() {
-  return NATIVE_HOSTS[hostIndex % NATIVE_HOSTS.length];
-}
-
-// 诊断日志：service worker 没有 fs/require，能持久化跨重启写日志的唯一地方
-// 是 chrome.storage.local。把 connectNative / detach 事件存进 wbDiagLog
-// （最近 40 条），刷新扩展后从侧面板拉取（panel.diag 指令）或临时开
-// 扩展的 devtools 看 storage。
-function diagLog(line) {
-  try {
-    chrome.storage.local.get(["wbDiagLog"], (res) => {
-      const arr = (res?.wbDiagLog || []).concat([new Date().toISOString().slice(5, 24) + " " + line]);
-      chrome.storage.local.set({ wbDiagLog: arr.slice(-40) });
-    });
-  } catch (_) {}
-}
-
-function connectNative() {
-  // 诊断锚点：记录扩展的真实 runtime ID + 正在尝试的 host 名。若 allowed_origins
-  // 与 runtime ID 不一致，Edge 的 native-messaging 查找会在 lookup 阶段就报
-  // "host not found"，这条日志能立刻把 ID 错位暴露出来。
-  diagLog("connectNative: extId=" + (chrome.runtime?.id || "?") + " trying " + nativeHost());
-  if (nativePort && nativePort.__alive) return true;
-  if (nativePort) {
-    // 旧 port 被标记为 dead（host 进程已退），先 detach 掉再重连，
-    // 否则 return true 会骗面板"已连接"，但 port 实际已不可用。
-    try { nativePort.onDisconnect?.removeListener?.(onNativeDisconnect); } catch (_) {}
-    nativePort = null;
-  }
-  // Restart the round from the preferred (prod) host. hostIndex only
-  // advances WITHIN a round; not resetting it drifts the fallback order so
-  // that after N disconnects the list no longer starts at NATIVE_HOSTS[0].
-  hostIndex = 0;
-  for (;;) {
-    try {
-      diagLog("connectNative: trying " + nativeHost());
-      nativePort = chrome.runtime.connectNative(nativeHost());
-      reconnectMs = 1000; // reset backoff on success
-      hostIndex = 0; // stick with the host that just accepted
-      log("info", "native connected", { host: nativeHost() });
-      diagLog("connectNative: OK " + nativeHost());
-      nativePort.onMessage.addListener(onNativeMessage);
-      nativePort.onDisconnect.addListener(onNativeDisconnect);
-      return true;
-    } catch (e) {
-      const err = e instanceof Error ? e.message : String(e);
-      log("warn", "connectNative failed, falling back to next host", { host: nativeHost(), err });
-      diagLog("connectNative FAILED " + nativeHost() + ": " + err + " (lastError=" + (chrome.runtime.lastError?.message || "-") + ")");
-      hostIndex++; // try the next host in the fallback list
-      nativePort = null;
-      if (hostIndex >= NATIVE_HOSTS.length * 2) {
-        // exhausted the fallback list twice — back off and retry
-        hostIndex = 0;
-        scheduleReconnect();
-        return false;
-      }
-    }
-  }
-}
-
-function scheduleReconnect() {
-  clearTimeout(reconnectTimer);
-  reconnectTimer = setTimeout(connectNative, reconnectMs);
-  reconnectMs = Math.min(reconnectMs * 2, 30000); // capped backoff
-}
-
-function onNativeDisconnect() {
-  const err = chrome.runtime.lastError?.message;
-  log("warn", "native disconnected", { err: err || "closed" });
-  diagLog("onNativeDisconnect: " + (err || "closed"));
-  if (nativePort) nativePort.__alive = false; // 标记为 dead，面板不再假阳性
-  nativePort = null;
-  scheduleReconnect();
-}
-
-function onNativeMessage(msg) {
-  if (!msg || typeof msg !== "object") return;
-  // 收到任何一条来自扩展的消息，证明 nativePort 确实活着。
-  // 面板的 panel.status 用 nativePort.__alive 判断，避免假阳性。
-  if (nativePort) nativePort.__alive = true;
-  handleNativeCommand(msg).catch((e) => {
-    brainSend({ type: "error", error: String(e) });
-  });
-}
-
-// ---------------- brain command dispatch ----------------
-const PANEL_CLIENT = "panel";
-
-async function handleNativeCommand(msg) {
-  const clientId = msg.clientId || msg.args?.clientId || "brain";
-  switch (msg.type) {
-    case "act.cdp": {
-      // { tabId, method, params } -> run one CDP call, return result
-      const { tabId, method, params } = msg;
-      if (typeof tabId !== "number") { brainSend({ type: "cdp.result", id: msg.id, ok: false, error: "act.cdp: tabId must be a number" }); return; }
-      acquireLease(clientId, tabId);
-      const cdpTimeout = msg.timeoutMs || 20000;
-      const res = await withTabLock(tabId, clientId, async () => {
-        const s = await ensureAttached(tabId);
-        const target = s.targetId ? { targetId: s.targetId } : { tabId };
-        return cdpSend(target, method, params, cdpTimeout);
-      }, lockMsForCdp(cdpTimeout, method)); // lock must outlive the CDP call (+ evaluate dialog retry)
-      brainSend({ type: "cdp.result", id: msg.id, ok: true, result: res });
-      return;
-    }
-    case "act.attach": {
-      if (typeof msg.tabId !== "number") { brainSend({ type: "ok", id: msg.id, ok: false, error: "act.attach: tabId must be a number" }); return; }
-      acquireLease(clientId, msg.tabId);
-      await withTabLock(msg.tabId, clientId, () => ensureAttached(msg.tabId));
-      brainSend({ type: "ok", id: msg.id, attached: true, tabId: msg.tabId, clientId });
-      return;
-    }
-    case "act.detach": {
-      if (typeof msg.tabId !== "number") { brainSend({ type: "ok", id: msg.id, ok: false, error: "act.detach: tabId must be a number" }); return; }
-      await releaseLease(clientId, msg.tabId);
-      brainSend({ type: "ok", id: msg.id, detached: true, tabId: msg.tabId, clientId });
-      return;
-    }
-    case "tabs.list": {
-      const all = await chrome.tabs.query({});
-      brainSend({
-        type: "tabs.result",
-        id: msg.id,
-        tabs: all.map((t) => ({ tabId: t.id, url: t.url, title: t.title, active: t.active })),
-      });
-      return;
-    }
-    case "tabs.group": {
-      // group task tabs together (mirrors tab-groups usage)
-      const { tabIds, title } = msg;
-      if (Array.isArray(tabIds) && tabIds.length) {
-        const g = await chrome.tabGroups.create({ tabIds, title: title || "wb-task" });
-        brainSend({ type: "ok", id: msg.id, groupId: g.id });
-      }
-      return;
-    }
-    case "diag":
-      brainSend({
-        type: "diag",
-        id: msg.id,
-        tabs: [...tabs.entries()].map(([tabId, s]) => ({ tabId, attached: s.attached, targetId: s.targetId })),
-        clients: [...clientLeases.entries()].map(([cid, set]) => ({ clientId: cid, tabs: [...set] })),
-        lockQueue: tabLock.keys(),
-        log: logBuf.slice(-50),
-      });
-      return;
-    case "agent.cmd": {
-      // An agent request (from the WS bridge or the native host) forwarded to us.
-      // Execute in the browser, reply with agent.result (matching id). The work
-      // lives in execAgentCmd so both the WS and native channels share it.
-      const { cmd, args, id } = msg;
-      const client = args?.clientId || clientId;
-      execAgentCmd(cmd, args, client)
-        .then((result) => brainSend({ type: "agent.result", id, ok: true, result }))
-        .catch((e) => brainSend({ type: "agent.result", id, ok: false, error: String(e.message || e) }));
-      return;
-    }
-    default:
-      brainSend({ type: "unknown", id: msg.id, cmd: msg.type });
-  }
-}
-
-function brainSend(obj) {
-  if (nativePort) {
-    try {
-      nativePort.postMessage(obj);
-    } catch (e) {
-      log("warn", "brain send failed", { error: String(e) });
-    }
-  }
-}
-
-// ---------------- agent command execution (shared by WS + native channels) ---
+// ---------------- agent command execution（WS 通道与测试共用） ----------------
 // execAgentCmd runs one agent request and RESOLVES with the result (or throws).
-// Channel-specific reply routing (WS socket vs native port) stays in the
-// caller — this function is pure work, so both bridges reuse the exact same
-// CDP logic, tab locks, and client leases.
+// 回复路由由调用方负责（WS 用 socket）；本函数只做纯工作，
+// 复用同一套 CDP 逻辑、tab 锁与 client 租约。
 // ---------------- 索引化动作空间（snapshot / click-el / type-el） ----------------
 // 引入自 browser-use/jev-ultrafast 的思想：agent 不手写选择器 JS，而是从
 // 快照索引里选编号 + 标签；执行前重新解析校验（stale 则明示，不静默点空）。
@@ -892,8 +704,8 @@ async function execAgentCmd(cmd, args, clientId, ctx) {
         }),
       ]);
       return {
-        nativeConnected: !!nativePort && nativePort.__alive !== false,
         wsAgents: agentWsPortsUp(),
+        clients: [...clientLeases.entries()].map(([cid, set]) => ({ clientId: cid, tabs: [...set] })),
         log: diagRes,
         wsLog: wsRes,
         dialogs: [...lastDialogs.entries()].map(([tid, d]) => ({ tabId: tid, ...d })),
@@ -905,11 +717,8 @@ async function execAgentCmd(cmd, args, clientId, ctx) {
 }
 
 // ---------------- agent WS bridge (primary channel) ----------------
-// The native-messaging path (connectNative -> host.js) is unreliable on this
-// machine: Edge's spawn/lookup of our host returns "not found" even with a
-// correct registry entry. The robust channel is the REVERSED one: agent apps
-// run a loopback WebSocket server (agent-collect.js) and THIS worker dials
-// OUT to it. Outbound WS always works from a browser, needs no registry, no
+// The channel is the REVERSED one: agent apps run a loopback WebSocket server
+// (agent-collect.js) and THIS worker dials OUT to it. Outbound WS always works from a browser, needs no registry, no
 // spawn, and an open socket keeps the MV3 service worker alive.
 // T-33：多会话并发下 10 个端口不够（每个会话的 serve/--keep 桥 + one-shot 直连
 // 各占一个），扩到 20 个。agent 侧默认段须与此一致（WB_AGENT_WS_START/END
@@ -1159,30 +968,25 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       case "panel.status": {
         if (!tokenLoaded) await loadBridgeToken();
         // 反映真实连接状态。WS 桥（主通道）：agentWsPortsUp() 非空即有 agent
-        // 连入；native（可选备用）：nativePort 存活。两者都可能是空。
+        // 连入；空表示当前没有任何 agent 连着这个扩展。
         const wsUp = agentWsPortsUp();
         sendResponse({
           ok: true,
           wsAgents: wsUp,
           wsConnected: wsUp.length > 0,
-          nativeConnected: !!nativePort && nativePort.__alive !== false,
         });
         return;
       }
       case "panel.diag": {
-        // 诊断：吐日志 + 当前 WS / native 状态。
+        // 诊断：吐日志 + 当前 WS 连接状态。
         chrome.storage.local.get(["wbDiagLog"], (res) => {
           sendResponse({
             ok: true,
-            nativeConnected: !!nativePort && nativePort.__alive !== false,
             log: res?.wbDiagLog || [],
           });
         });
         return;
       }
-      case "panel.connectNative":
-        sendResponse({ ok: connectNative(), host: nativeHost() });
-        break;
       case "panel.cdp": {
         // direct CDP call from the panel UI: { tabId, method, params }
         // Serialized on the tab so it never interleaves with an agent's CDP.
@@ -1229,7 +1033,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({
       ok: true,
       status: "connected",
-      nativeConnected: !!nativePort,
       tabs: [...tabs.entries()].map(([id, s]) => ({ tabId: id, attached: s.attached })),
     });
   }
@@ -1246,11 +1049,8 @@ if (chrome.commands?.onCommand?.addListener) {
   });
 }
 
-// Auto-connect on install/startup. The PRIMARY channel is the agent WS bridge
-// (agent apps run a loopback WS server; this worker dials out to it). The
-// native-messaging channel is kept only as an optional manual fallback —
-// Edge on this machine never spawns our host ("not found"), so auto
-// connectNative is deliberately NOT called: it would just log error loops.
+// Auto-connect on install/startup. The channel is the agent WS bridge:
+// agent apps run a loopback WS server and this worker dials out to it.
 // MV3 SWs are lazy: onStartup is what makes the browser boot us at launch,
 // and a 30s keepalive alarm re-dials the WS bridge if we ever went idle.
 //
@@ -1278,7 +1078,6 @@ if (chrome.alarms?.create) {
 // no-op in the browser).
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    connectNative,
     connectAgentWs,
     execAgentCmd,
     onWsMessage,

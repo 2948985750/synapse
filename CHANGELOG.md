@@ -34,6 +34,17 @@ agent 侧（CLI / 桥 / 路由 / 鉴权）在独立仓库 [synapse-skill](https:
 
 ---
 
+### 清理：移除 native messaging 死支路
+
+- 删掉 `NATIVE_HOSTS`、`nativePort`、`connectNative()`、`onNativeMessage`、`onNativeDisconnect`、
+  `brainSend()`、`handleNativeCommand()`、`panel.connectNative` 消息，以及四处 `nativeConnected` 字段。
+- `chrome.debugger.onEvent` 里推给 native 的 `cdp.event` 一并删除（WS 通道用 `event.push` 定向推送）。
+- **副作用（正向）**：`execAgentCmd` 的 `diag` 载荷补上了 `clients` 字段——原先只有 native 通道有。
+- 测试改用 `execAgentCmd` 直接注入命令（`sendNative` → `sendCmd`），不再依赖 native port。
+- 结果：background.js 里 `native` 相关引用归零，8 + 27 用例全绿。
+
+---
+
 ## 2026-10-23 — 配对令牌持久化
 
 ### BUG-1 扩展忽略已保存的配对令牌（与 node 侧配对闭环配套）

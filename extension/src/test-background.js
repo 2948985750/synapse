@@ -108,7 +108,6 @@ function makeChrome(dbg) {
   const chrome = {
     runtime: {
       lastError: null,
-      connectNative: () => port,
       // Single dispatcher: chrome fires every registered onMessage listener for
       // each message, exactly like the real API. The mock records listeners and
       // dispatches to all of them so each listener sees (msg, sender, sendResponse).
@@ -167,17 +166,32 @@ function loadBackground(mock) {
   };
   const handle = require(bgPath);
   mock.fireInstalled(); // -> onInstalled (now dials the WS bridge; no-ops in node mock)
-  // The native-port cases below need the native port wired. Pre-pivot,
-  // onInstalled auto-ran connectNative(); post-pivot it's opt-in, so bind it
-  // explicitly here via the test-only handle.
-  handle.connectNative?.();
+  // 生产里已没有 native messaging 通道；测试用 execAgentCmd 直接注入命令，
+  // 由下面的 sendCmd 复现 agent.cmd / diag 的信封语义。
+  mock.port.__handle = handle;
   mock.handle = handle; // expose the module handle (captureSessions, agentWs, execAgentCmd)
   return mock;
 }
 
-// ---------------- native-port plumbing -----------------------------------
-function sendNative(port, msg) {
-  port.onMessage.listeners[0](msg);
+// ---------------- 命令注入（替代已删除的 native 通道） -------------------
+// 复现旧通道的信封语义：agent.cmd → {type:"agent.result", ok, result|error}；
+// diag → {type:"diag", ...payload}。生产端不再有 native port，测试直接调 execAgentCmd。
+function sendCmd(port, msg) {
+  const handle = port.__handle;
+  const isDiag = msg.type === "diag";
+  const cmd = isDiag ? "diag" : msg.cmd;
+  const args = isDiag ? {} : msg.args;
+  const client = (args && args.clientId) || "test";
+  Promise.resolve()
+    .then(() => handle.execAgentCmd(cmd, args, client))
+    .then((result) => {
+      port.posted.push(isDiag
+        ? { type: "diag", id: msg.id, ...result }
+        : { type: "agent.result", id: msg.id, ok: true, result });
+    })
+    .catch((e) => {
+      port.posted.push({ type: "agent.result", id: msg.id, ok: false, error: String(e.message || e) });
+    });
 }
 
 function waitForReply(port, id, type, timeoutMs = 4000) {
@@ -214,7 +228,7 @@ async function main() {
   await ok("3 concurrent agents attach same tab -> attach() exactly once, all ok", async () => {
     const jobs = ["c1", "c2", "c3"].map((c, i) => {
       const id = "attach-" + i;
-      sendNative(port, { type: "agent.cmd", id, cmd: "attach", args: { tabId: 100, clientId: c } });
+      sendCmd(port, { type: "agent.cmd", id, cmd: "attach", args: { tabId: 100, clientId: c } });
       return waitForReply(port, id, "agent.result");
     });
     const replies = await Promise.all(jobs);
@@ -227,9 +241,9 @@ async function main() {
   //    op that arrives second (serialization by the per-tab lock).
   await ok("same tab: slow op started first completes before later fast op (FIFO)", async () => {
     state.order.length = 0;
-    sendNative(port, { type: "agent.cmd", id: "f-slow", cmd: "cdp", args: { tabId: 200, method: "__slow", clientId: "c1" } });
+    sendCmd(port, { type: "agent.cmd", id: "f-slow", cmd: "cdp", args: { tabId: 200, method: "__slow", clientId: "c1" } });
     await new Promise((r) => setTimeout(r, 100)); // let slow acquire the lock & enter its 200ms sleep
-    sendNative(port, { type: "agent.cmd", id: "f-fast", cmd: "cdp", args: { tabId: 200, method: "__fast", clientId: "c2" } });
+    sendCmd(port, { type: "agent.cmd", id: "f-fast", cmd: "cdp", args: { tabId: 200, method: "__fast", clientId: "c2" } });
     await Promise.all([waitForReply(port, "f-slow", "agent.result"), waitForReply(port, "f-fast", "agent.result")]);
     assert.ok(state.order.indexOf("slow") < state.order.indexOf("fast"), "slow fully executed before fast (" + state.order + ")");
   });
@@ -237,8 +251,8 @@ async function main() {
   // C. cross-tab parallelism: two slow ops on DIFFERENT tabs run concurrently.
   await ok("different tabs: two 200ms ops run in parallel (not serialized)", async () => {
     const t0 = Date.now();
-    sendNative(port, { type: "agent.cmd", id: "p-a", cmd: "cdp", args: { tabId: 300, method: "__slow", clientId: "c1" } });
-    sendNative(port, { type: "agent.cmd", id: "p-b", cmd: "cdp", args: { tabId: 301, method: "__slow", clientId: "c2" } });
+    sendCmd(port, { type: "agent.cmd", id: "p-a", cmd: "cdp", args: { tabId: 300, method: "__slow", clientId: "c1" } });
+    sendCmd(port, { type: "agent.cmd", id: "p-b", cmd: "cdp", args: { tabId: 301, method: "__slow", clientId: "c2" } });
     await Promise.all([waitForReply(port, "p-a", "agent.result"), waitForReply(port, "p-b", "agent.result")]);
     const elapsed = Date.now() - t0;
     // serialized would be ~400ms; parallel ~210ms. Allow generous margin.
@@ -247,10 +261,10 @@ async function main() {
 
   // D. clientId attribution: diag reports which client leases which tab.
   await ok("diag attributes tabs to the right client (clientId passthrough)", async () => {
-    sendNative(port, { type: "agent.cmd", id: "d-a", cmd: "attach", args: { tabId: 400, clientId: "alpha" } });
-    sendNative(port, { type: "agent.cmd", id: "d-b", cmd: "attach", args: { tabId: 401, clientId: "beta" } });
+    sendCmd(port, { type: "agent.cmd", id: "d-a", cmd: "attach", args: { tabId: 400, clientId: "alpha" } });
+    sendCmd(port, { type: "agent.cmd", id: "d-b", cmd: "attach", args: { tabId: 401, clientId: "beta" } });
     await Promise.all([waitForReply(port, "d-a", "agent.result"), waitForReply(port, "d-b", "agent.result")]);
-    sendNative(port, { type: "diag", id: "d-d" });
+    sendCmd(port, { type: "diag", id: "d-d" });
     const d = await waitForReply(port, "d-d", "diag");
     const alpha = d.clients.find((c) => c.clientId === "alpha");
     const beta = d.clients.find((c) => c.clientId === "beta");
@@ -262,27 +276,27 @@ async function main() {
   //    on a tab releases. c1+c2 both lease tab 500; c1 detaches -> still
   //    attached; c2 detaches -> physically detached.
   await ok("physical detach only when the last client on a tab releases", async () => {
-    sendNative(port, { type: "agent.cmd", id: "e-a", cmd: "attach", args: { tabId: 500, clientId: "c1" } });
-    sendNative(port, { type: "agent.cmd", id: "e-b", cmd: "attach", args: { tabId: 500, clientId: "c2" } });
+    sendCmd(port, { type: "agent.cmd", id: "e-a", cmd: "attach", args: { tabId: 500, clientId: "c1" } });
+    sendCmd(port, { type: "agent.cmd", id: "e-b", cmd: "attach", args: { tabId: 500, clientId: "c2" } });
     await Promise.all([waitForReply(port, "e-a", "agent.result"), waitForReply(port, "e-b", "agent.result")]);
     assert.ok(state.attached.has(500), "tab 500 attached under two clients");
 
-    sendNative(port, { type: "agent.cmd", id: "e-c1", cmd: "detach", args: { tabId: 500, clientId: "c1" } });
+    sendCmd(port, { type: "agent.cmd", id: "e-c1", cmd: "detach", args: { tabId: 500, clientId: "c1" } });
     await waitForReply(port, "e-c1", "agent.result");
     assert.ok(state.attached.has(500), "c1 detached but c2 still holds -> tab stays attached");
 
-    sendNative(port, { type: "agent.cmd", id: "e-c2", cmd: "detach", args: { tabId: 500, clientId: "c2" } });
+    sendCmd(port, { type: "agent.cmd", id: "e-c2", cmd: "detach", args: { tabId: 500, clientId: "c2" } });
     await waitForReply(port, "e-c2", "agent.result");
     assert.ok(!state.attached.has(500), "last client detached -> physical detach fired");
   });
 
   // F. unknown agent cmd surfaces ok:false without crashing the dispatch.
   await ok("unknown agent.cmd returns ok:false and the worker stays healthy", async () => {
-    sendNative(port, { type: "agent.cmd", id: "u-1", cmd: "noSuchCmd", args: { clientId: "c1" } });
+    sendCmd(port, { type: "agent.cmd", id: "u-1", cmd: "noSuchCmd", args: { clientId: "c1" } });
     const r = await waitForReply(port, "u-1", "agent.result");
     assert.strictEqual(r.ok, false, "unknown cmd -> ok:false");
     // worker still healthy: a real cmd afterwards still round-trips.
-    sendNative(port, { type: "agent.cmd", id: "u-2", cmd: "attach", args: { tabId: 600, clientId: "c1" } });
+    sendCmd(port, { type: "agent.cmd", id: "u-2", cmd: "attach", args: { tabId: 600, clientId: "c1" } });
     const r2 = await waitForReply(port, "u-2", "agent.result");
     assert.strictEqual(r2.ok, true, "dispatch healthy after unknown cmd");
   });
@@ -291,20 +305,20 @@ async function main() {
   //    timeout, so after the timeout fires the tab lock is released and the
   //    next op on the SAME tab proceeds (proves the timeout-race fix).
   await ok("a hanging CDP command times out and frees the tab lock", async () => {
-    sendNative(port, { type: "agent.cmd", id: "h-hang", cmd: "cdp", args: { tabId: 700, method: "__hang", clientId: "c1", timeoutMs: 120 } });
+    sendCmd(port, { type: "agent.cmd", id: "h-hang", cmd: "cdp", args: { tabId: 700, method: "__hang", clientId: "c1", timeoutMs: 120 } });
     const r = await waitForReply(port, "h-hang", "agent.result", 3000);
     assert.strictEqual(r.ok, false, "hanging cdp surfaces as ok:false (CDP timeout)");
     // Now a normal op on the same tab must still get in (lock was released).
-    sendNative(port, { type: "agent.cmd", id: "h-fast", cmd: "cdp", args: { tabId: 700, method: "__fast", clientId: "c2", timeoutMs: 3000 } });
+    sendCmd(port, { type: "agent.cmd", id: "h-fast", cmd: "cdp", args: { tabId: 700, method: "__fast", clientId: "c2", timeoutMs: 3000 } });
     const r2 = await waitForReply(port, "h-fast", "agent.result", 3000);
     assert.strictEqual(r2.ok, true, "tab lock freed after the hang");
   });
   // H. detach from a client that never leased the tab is a clean no-op.
   await ok("detach from an unknown client is a no-op (no detach, no throw)", async () => {
-    sendNative(port, { type: "agent.cmd", id: "n-a", cmd: "attach", args: { tabId: 800, clientId: "real" } });
+    sendCmd(port, { type: "agent.cmd", id: "n-a", cmd: "attach", args: { tabId: 800, clientId: "real" } });
     await waitForReply(port, "n-a", "agent.result");
     assert.ok(state.attached.has(800), "tab attached under 'real'");
-    sendNative(port, { type: "agent.cmd", id: "n-x", cmd: "detach", args: { tabId: 800, clientId: "stray" } });
+    sendCmd(port, { type: "agent.cmd", id: "n-x", cmd: "detach", args: { tabId: 800, clientId: "stray" } });
     const rx = await waitForReply(port, "n-x", "agent.result");
     assert.strictEqual(rx.ok, true, "stray detach reported ok");
     assert.ok(state.attached.has(800), "stray detach did NOT physically detach the tab");
