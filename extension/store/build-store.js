@@ -1,6 +1,6 @@
 "use strict";
 // 构建商店可上传的 dist（manifest 在包根）：只含扩展运行所需文件，
-// 排除开发件（test-*）、agent 侧桥（../agent/）与打包工具本身（store/）。
+// 排除开发件（test-*）与打包工具本身（store/）。agent 侧桥在另一个仓库，不在本包内。
 // 产物：extension/store/dist/synapse/（随后由 PowerShell Compress-Archive 打 zip）。
 const fs = require("fs");
 const path = require("path");
@@ -49,9 +49,9 @@ for (const ref of new Set(refs)) {
     process.exit(1);
   }
 }
-// 确认没有漏打包测试件 / agent 侧桥
+// 确认没有漏打包测试件
 for (const f of fs.readdirSync(DIST, { recursive: true })) {
-  if (/test-.*\.js$|(^|\/)agent\//.test(f)) {
+  if (/test-.*\.js$/.test(f)) {
     console.error("dist 里混入了不应发布的内容：" + f);
     process.exit(1);
   }
