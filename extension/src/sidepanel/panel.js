@@ -21,34 +21,12 @@ async function refreshStatus() {
   try {
     const r = await chrome.runtime.sendMessage({ type: "panel.status" });
     if (!r?.ok) throw new Error(r?.error || "状态查询失败");
-    setState(r.wsConnected ? "ok" : "", r.needsPairing ? "待配对" : r.wsConnected ? "已连接" : "等待本机工具");
+    setState(r.wsConnected ? "ok" : "", r.wsConnected ? "已连接" : "等待本机工具");
   } catch (_) { setState("", "状态不可用"); }
 }
 refreshStatus();
 const statusTimer = setInterval(refreshStatus, 3000);
 window.addEventListener("unload", () => clearInterval(statusTimer));
-$("btn-pair").addEventListener("click", async () => {
-  const button = $("btn-pair");
-  const result = $("pair-result");
-  const token = $("in-token").value.trim();
-  if (!/^[0-9a-f]{64}$/i.test(token)) {
-    result.textContent = "请输入本机工具生成的 64 位配对码。";
-    result.className = "hint err";
-    return;
-  }
-  button.disabled = true;
-  try {
-    const r = await chrome.runtime.sendMessage({ type: "panel.setToken", token });
-    if (!r?.ok) throw new Error(r?.error || "保存失败");
-    $("in-token").value = "";
-    result.textContent = "已保存，正在连接本机工具。";
-    result.className = "hint";
-    await refreshStatus();
-  } catch (e) {
-    result.textContent = "配对失败：" + e.message;
-    result.className = "hint err";
-  } finally { button.disabled = false; }
-});
 
 // 标签下拉：自动拉一次，供 CDP 调用选目标 tab。
 async function refreshTabs() {
