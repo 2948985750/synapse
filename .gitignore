@@ -10,8 +10,8 @@ node_modules/
 tmp_*
 
 # 商店打包产物
-extension/store/dist/
-extension/store/*.zip
+build/dist/
+build/*.zip
 
 # 系统垃圾
 .DS_Store

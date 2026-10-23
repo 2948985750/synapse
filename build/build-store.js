@@ -1,11 +1,11 @@
 "use strict";
 // 构建商店可上传的 dist（manifest 在包根）：只含扩展运行所需文件，
-// 排除开发件（test-*）与打包工具本身（store/）。agent 侧桥在另一个仓库，不在本包内。
-// 产物：extension/store/dist/synapse/（随后由 PowerShell Compress-Archive 打 zip）。
+// 排除开发件（test-*）。agent 侧桥在另一个仓库，不在本包内。
+// 产物：build/dist/synapse/（需要上传商店时再自行 Compress-Archive 打 zip）。
 const fs = require("fs");
 const path = require("path");
 
-const EXT = path.join(__dirname, "..");
+const EXT = path.join(__dirname, "..", "extension");
 const DIST = path.join(__dirname, "dist", "synapse");
 
 // 需要打包进 zip 的相对路径（manifest 位于根）。图标只收 16/32/48/128（512 用于商店页展示，不入包）。
@@ -57,5 +57,4 @@ for (const f of fs.readdirSync(DIST, { recursive: true })) {
   }
 }
 console.log("dist 就绪：" + DIST);
-console.log("包含 " + fs.readdirSync(DIST, { recursive: true }).length + " 个条目。用 PowerShell 打 zip：");
-console.log('  Compress-Archive -Path "dist\\synapse\\*" -DestinationPath "synapse-' + manifest.version + '.zip"');
+console.log("包含 " + fs.readdirSync(DIST, { recursive: true }).length + " 个条目（需要上传商店时再打 zip）。");

@@ -45,6 +45,17 @@ agent 侧（CLI / 桥 / 路由 / 鉴权）在独立仓库 [synapse-skill](https:
 
 ---
 
+### 工程：构建脚本移到 `build/`，删除过期 zip
+
+- `extension/store/build-store.js` → `build/build-store.js`，产物改为 `build/dist/synapse/`。
+- `extension/store/gen-icons.js` → `build/gen-icons.js`（输出仍指向 `extension/icons/`）。
+- 删除过期的 `synapse-0.15.1.zip` 和 `extension/store/dist/`；暂不打包，需要时再自行压缩。
+- `extension/store/` 只留提交材料：`LISTING.md`、`privacy-policy.html`。
+- npm scripts：`build:store` / `release:check` 指向新路径，新增 `gen:icons`。
+- `.gitignore`：`extension/store/dist/`、`extension/store/*.zip` → `build/dist/`、`build/*.zip`。
+
+---
+
 ## 2026-10-23 — 配对令牌持久化
 
 ### BUG-1 扩展忽略已保存的配对令牌（与 node 侧配对闭环配套）

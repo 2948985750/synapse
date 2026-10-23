@@ -104,7 +104,7 @@ function renderIcon(size) {
   return out;
 }
 
-const outDir = path.join(__dirname, "..", "icons");
+const outDir = path.join(__dirname, "..", "extension", "icons");
 fs.mkdirSync(outDir, { recursive: true });
 for (const size of [16, 32, 48, 128, 512]) {
   const rgba = renderIcon(size);

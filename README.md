@@ -28,7 +28,8 @@ agent 侧（synapse-skill 仓库的 agent/）
 | `extension/src/content.js` | 页内辅助（`isTrusted` 事件、shadow DOM 穿透） |
 | `extension/src/sidepanel/` | 侧边栏 UI（标签、诊断、CDP 调用） |
 | `extension/icons/` | 商店图标 |
-| `extension/store/` | 商店发布工具（`gen-icons.js`、`build-store.js`、`LISTING.md`） |
+| `build/` | 构建脚本（`build-store.js`、`gen-icons.js`），产物在 `build/dist/` |
+| `extension/store/` | 商店文案与隐私页（`LISTING.md`、`privacy-policy.html`） |
 
 ## 本机加载（unpacked）
 
@@ -41,11 +42,11 @@ agent 侧（synapse-skill 仓库的 agent/）
 ## 发布到商店
 
 ```powershell
-npm run build:store     # = node extension/store/build-store.js
+npm run build:store     # = node build/build-store.js
 ```
 
-生成 `extension/store/dist/synapse/`（manifest 在包根，不含测试件；agent 侧代码
-本来就不在本仓库）→ 打 zip 上传 [aka.ms/edgedevcenter](https://aka.ms/edgedevcenter)。
+生成 `build/dist/synapse/`（manifest 在包根，不含测试件；agent 侧代码本来就不在本仓库）。
+需要上传时再自行打 zip 传到 [aka.ms/edgedevcenter](https://aka.ms/edgedevcenter)。
 列表文案与审核问答见 `extension/store/LISTING.md`。
 
 ## 权限与隐私
