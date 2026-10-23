@@ -8,7 +8,7 @@
 })(globalThis, function (cryptoApi) {
   const PROTOCOL = "wb-cdp-ws/2";
   // 未配对时的默认回环密钥：双方都缺省即退化为旧版"无 token"行为（仍仅限 127.0.0.1）。
-  const DEFAULT_TOKEN = "0".repeat(64);
+  const DEFAULT_TOKEN = "51cffbd1902195784cd69663e49ca8e977decf9f3a4e545c80454c5de96cb76d";
   const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   const validToken = (value) => typeof value === "string" && /^[0-9a-f]{64}$/i.test(value);
   function bytes(value) {

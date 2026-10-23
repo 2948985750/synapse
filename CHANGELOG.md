@@ -15,6 +15,15 @@ agent 侧（CLI / 桥 / 路由 / 鉴权）在独立仓库 [synapse-skill](https:
 
 ---
 
+### 变更：鉴权标识改为内置常量，移除配对 UI 与 storage 令牌
+
+- `ws-auth.js` 的 `DEFAULT_TOKEN` 换成一枚项目专用的固定标识（与 agent 仓库同值）。
+- `loadBridgeToken()` 直接返回该常量，不再读 `chrome.storage`；
+  删除 `applyBridgeToken` / `replaceBridgeToken` / `panel.setToken` / storage 监听。
+- `panel.status` 不再返回 `needsPairing`。
+
+---
+
 ## 2026-10-23 — 配对令牌持久化
 
 ### BUG-1 扩展忽略已保存的配对令牌（与 node 侧配对闭环配套）

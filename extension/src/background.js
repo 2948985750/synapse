@@ -931,56 +931,14 @@ let tokenLoaded = false;
 let connectingAgentWs = null;
 
 function loadBridgeToken() {
-  // 配对闭环：优先用侧边栏「保存配对」存下的令牌，没有则回落到内置默认密钥。
-  // 早先这里固定返回 DEFAULT_TOKEN，用户填了配对码也只能当次生效（SW 挂起即丢失），
-  // 而 node 侧又只认默认密钥，导致"照提示配对反而连不上"。
+  // 鉴权标识是两侧内置的固定常量（ws-auth.js 的 DEFAULT_TOKEN），
+  // 不读 storage、不需要用户配对：扩展与 agent 同时更新即可。
   return new Promise((resolve) => {
-    const fallback = () => {
-      bridgeToken = WSAuth.DEFAULT_TOKEN;
-      tokenLoaded = true;
-      resolve(bridgeToken);
-    };
-    try {
-      chrome.storage.local.get(["wbBridgeToken"], (res) => {
-        const saved = res && res.wbBridgeToken;
-        bridgeToken = WSAuth.validToken(saved) ? saved : WSAuth.DEFAULT_TOKEN;
-        tokenLoaded = true;
-        resolve(bridgeToken);
-      });
-    } catch (_) {
-      fallback();
-    }
+    bridgeToken = WSAuth.DEFAULT_TOKEN;
+    tokenLoaded = true;
+    resolve(bridgeToken);
   });
 }
-
-async function applyBridgeToken(token) {
-  const nextToken = WSAuth.validToken(token) ? token : null;
-  if (tokenLoaded && bridgeToken === nextToken) return;
-  bridgeToken = nextToken;
-  tokenLoaded = true;
-  for (const set of agentWs.values()) for (const ws of set) {
-    ws.__authenticated = false;
-    ws.__retired = true;
-    try { ws.close(); } catch (_) {}
-  }
-  agentWs.clear();
-  if (bridgeToken) await connectAgentWs();
-}
-
-async function replaceBridgeToken(token) {
-  if (!WSAuth.validToken(token)) throw new Error("Pairing key must be 64 hexadecimal characters");
-  await new Promise((resolve, reject) => chrome.storage.local.set({ wbBridgeToken: token }, () => {
-    const error = chrome.runtime.lastError;
-    error ? reject(new Error(error.message)) : resolve();
-  }));
-  await applyBridgeToken(token);
-}
-
-chrome.storage.onChanged?.addListener?.((changes, areaName) => {
-  if (areaName === "local" && Object.prototype.hasOwnProperty.call(changes, "wbBridgeToken")) {
-    applyBridgeToken(changes.wbBridgeToken.newValue).catch((e) => log("warn", "pairing refresh failed", { error: String(e) }));
-  }
-});
 
 function disconnectClient(ws, clientId, releaseLeases) {
   ws.__disconnecting ||= new Map();
@@ -1198,11 +1156,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (typeof msg?.type !== "string" || !msg.type.startsWith("panel.")) return false;
   (async () => {
     switch (msg?.type) {
-      case "panel.setToken": {
-        await replaceBridgeToken(msg.token);
-        sendResponse({ ok: true });
-        return;
-      }
       case "panel.status": {
         if (!tokenLoaded) await loadBridgeToken();
         // 反映真实连接状态。WS 桥（主通道）：agentWsPortsUp() 非空即有 agent
@@ -1212,7 +1165,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           ok: true,
           wsAgents: wsUp,
           wsConnected: wsUp.length > 0,
-          needsPairing: !bridgeToken,
           nativeConnected: !!nativePort && nativePort.__alive !== false,
         });
         return;
@@ -1338,7 +1290,6 @@ if (typeof module !== "undefined" && module.exports) {
     captureSessions,
     stopCapture,
     disconnectClient,
-    replaceBridgeToken,
     loadBridgeToken,
   };
 }

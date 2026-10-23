@@ -26,7 +26,7 @@ agent 侧（synapse-skill 仓库的 agent/）
 | `extension/src/tablock.js` | 同 tab 串行化（FIFO + 超时） |
 | `extension/src/ws-auth.js` | 浏览器侧 HMAC 挑战/证明（协议 `wb-cdp-ws/2`） |
 | `extension/src/content.js` | 页内辅助（`isTrusted` 事件、shadow DOM 穿透） |
-| `extension/src/sidepanel/` | 侧边栏 UI（配对、标签、诊断） |
+| `extension/src/sidepanel/` | 侧边栏 UI（标签、诊断、CDP 调用） |
 | `extension/icons/` | 商店图标 |
 | `extension/store/` | 商店发布工具（`gen-icons.js`、`build-store.js`、`LISTING.md`） |
 
@@ -54,12 +54,20 @@ npm run build:store     # = node extension/store/build-store.js
 |---|---|
 | `debugger` | 全量 CDP 透传的唯一途径（替代 `--remote-debugging-port`） |
 | `tabs` / `tabGroups` | 列出与组织可驱动的标签 |
-| `sidePanel` | 状态与配对 UI |
-| `storage` | 保存配对码与诊断日志（仅本地） |
+| `sidePanel` | 状态与 CDP 调用 UI |
+| `storage` | 诊断日志（仅本地） |
 | `alarms` | MV3 service worker 保活（30s 心跳，掉线自动重拨） |
 | `<all_urls>` | 要在任意站点上执行页内 JS（用户主动触发） |
 
 扩展**只与 `127.0.0.1` 上的本机桥通信**，不向外发数据、不带遥测。
+
+## 鉴权与信任模型
+
+扩展与 agent 两侧写死同一枚固定标识（`src/ws-auth.js` 的 `DEFAULT_TOKEN`，
+agent 仓库里是同值），连接时做双向 HMAC 挑战/应答。没有配对码、没有 UI。
+
+它不是密码：源码公开，能在这台机器上运行代码的进程都可以读到它。
+本工具按**单用户可信本机**设计。
 
 ## 测试
 

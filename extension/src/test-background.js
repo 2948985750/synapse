@@ -549,11 +549,10 @@ async function main() {
     assert.strictEqual(closed, 2);
   });
 
-  await ok("extension uses the paired token from storage and rejects a false server proof", async () => {
-    // 配对闭环：侧边栏「保存配对」写进 storage 的 token，扩展必须真正使用它；
-    // 没有存过才回落到内置默认密钥。
-    const token = "ab".repeat(32);
-    mock.chrome.storage.local._d.wbBridgeToken = token;
+  await ok("extension always uses the built-in identifier and rejects a false server proof", async () => {
+    // 鉴权标识是两侧内置常量：storage 里的值不再参与（配对 UI 已移除）。
+    const token = WSAuth.DEFAULT_TOKEN;
+    mock.chrome.storage.local._d.wbBridgeToken = "ab".repeat(32); // 应被忽略
     await handle.loadBridgeToken();
     const frames = [];
     const sock = { readyState: 1, close() { this.closed = true; }, send(raw) { frames.push(JSON.parse(raw)); } };
@@ -655,9 +654,9 @@ async function main() {
       await handle.loadBridgeToken();
       await handle.connectAgentWs();
       assert.strictEqual(sockets.length, 20, "unpaired worker dials with the default key");
-      // 配对闭环：storage 里有有效 token 时必须用它。
-      const token = "cd".repeat(32);
-      mock.chrome.storage.local._d.wbBridgeToken = token;
+      // 鉴权标识是内置常量：storage 里有值也不参与。
+      const token = WSAuth.DEFAULT_TOKEN;
+      mock.chrome.storage.local._d.wbBridgeToken = "cd".repeat(32); // 应被忽略
       await handle.loadBridgeToken();
       await handle.connectAgentWs();
       assert.strictEqual(sockets.length, 20);
