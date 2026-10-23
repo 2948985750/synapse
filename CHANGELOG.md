@@ -5,6 +5,19 @@ agent 侧（CLI / 桥 / 路由 / 鉴权）在独立仓库 [synapse-skill](https:
 
 ---
 
+## 2026-10-23 — 配对令牌持久化
+
+### BUG-1 扩展忽略已保存的配对令牌（与 node 侧配对闭环配套）
+
+- **现象**：侧边栏「保存配对」后，扩展只在当次 service worker 生命周期内用这个令牌；
+  SW 一挂起重启就回到内置默认密钥，而对端（node）此时可能已经在用随机令牌 → 连接失败。
+- **根因**：`loadBridgeToken()` 无条件返回 `WSAuth.DEFAULT_TOKEN`，从不读 `chrome.storage.local`。
+- **修法**：优先读 `wbBridgeToken`，无效/缺失才回落默认；`storage.local.get` 不可用时也有兜底。
+- **测试**：`test-background` 里两条用例改为断言「storage 有令牌就必须用它」。
+- **配套**：node 侧 `readToken()` 同步改为读 `data/bridge-auth.json`（见 synapse-skill 的 CHANGELOG）。
+
+---
+
 ## 2026-10-22
 
 ### 仓库拆分

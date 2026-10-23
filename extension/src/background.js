@@ -931,11 +931,25 @@ let tokenLoaded = false;
 let connectingAgentWs = null;
 
 function loadBridgeToken() {
-  // Token 机制已退役：固定使用内置默认密钥（仅回环），不再读 storage。
+  // 配对闭环：优先用侧边栏「保存配对」存下的令牌，没有则回落到内置默认密钥。
+  // 早先这里固定返回 DEFAULT_TOKEN，用户填了配对码也只能当次生效（SW 挂起即丢失），
+  // 而 node 侧又只认默认密钥，导致"照提示配对反而连不上"。
   return new Promise((resolve) => {
-    bridgeToken = WSAuth.DEFAULT_TOKEN;
-    tokenLoaded = true;
-    resolve(bridgeToken);
+    const fallback = () => {
+      bridgeToken = WSAuth.DEFAULT_TOKEN;
+      tokenLoaded = true;
+      resolve(bridgeToken);
+    };
+    try {
+      chrome.storage.local.get(["wbBridgeToken"], (res) => {
+        const saved = res && res.wbBridgeToken;
+        bridgeToken = WSAuth.validToken(saved) ? saved : WSAuth.DEFAULT_TOKEN;
+        tokenLoaded = true;
+        resolve(bridgeToken);
+      });
+    } catch (_) {
+      fallback();
+    }
   });
 }
 
