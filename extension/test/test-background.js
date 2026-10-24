@@ -149,15 +149,15 @@ function makeChrome(dbg) {
 
 // Load the real background.js once, with chrome + importScripts mocked.
 function loadBackground(mock) {
-  const bgPath = path.join(__dirname, "background.js");
-  const tlPath = path.join(__dirname, "tablock.js");
+  const bgPath = path.join(__dirname, "..", "src", "background.js");
+  const tlPath = path.join(__dirname, "..", "src", "tablock.js");
   delete require.cache[require.resolve(bgPath)];
   global.chrome = mock.chrome;
   // Resolve the imported file relative to background.js's own directory, so
   // adding a second importScripts module later doesn't silently break the stub.
   global.importScripts = (...files) => {
     for (const file of files) {
-      const target = path.resolve(__dirname, String(file).replace(/^\.\//, ""));
+      const target = path.resolve(__dirname, "..", "src", String(file).replace(/^\.\//, ""));
       if (!fs.existsSync(target)) throw new Error("importScripts: cannot resolve " + file);
       const mod = require(target);
       if (mod.TabLock) global.TabLock = mod.TabLock;

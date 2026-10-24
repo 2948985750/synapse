@@ -62,9 +62,13 @@ function createCdpTransport(options = {}) {
         method === "Runtime.evaluate" &&
         /CDP timeout/.test(String((e && e.message) || e))
       ) {
-        log("warn", "Runtime.evaluate timeout — suspected modal dialog, retrying once", {
-          waitMs: DIALOG_RETRY_WAIT_MS,
-        });
+        log(
+          "warn",
+          "Runtime.evaluate timeout — suspected modal dialog, retrying once",
+          {
+            waitMs: DIALOG_RETRY_WAIT_MS,
+          },
+        );
         await new Promise((r) => setTimeout(r, DIALOG_RETRY_WAIT_MS));
         try {
           return await sendOnce(target, method, params, timeoutMs);
@@ -122,4 +126,5 @@ function createCdpTransport(options = {}) {
 
 const CdpTransport = { createCdpTransport };
 if (typeof globalThis !== "undefined") Object.assign(globalThis, CdpTransport);
-if (typeof module !== "undefined" && module.exports) module.exports = CdpTransport;
+if (typeof module !== "undefined" && module.exports)
+  module.exports = CdpTransport;

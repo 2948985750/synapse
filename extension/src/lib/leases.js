@@ -121,4 +121,5 @@ function createLeaseManager(deps = {}) {
 
 const LeaseManager = { createLeaseManager };
 if (typeof globalThis !== "undefined") Object.assign(globalThis, LeaseManager);
-if (typeof module !== "undefined" && module.exports) module.exports = LeaseManager;
+if (typeof module !== "undefined" && module.exports)
+  module.exports = LeaseManager;

@@ -329,10 +329,11 @@ function createCommandExecutor(deps = {}) {
     }
   }
 
-
   return { execAgentCmd };
 }
 
 const CommandExecutor = { createCommandExecutor };
-if (typeof globalThis !== "undefined") Object.assign(globalThis, CommandExecutor);
-if (typeof module !== "undefined" && module.exports) module.exports = CommandExecutor;
+if (typeof globalThis !== "undefined")
+  Object.assign(globalThis, CommandExecutor);
+if (typeof module !== "undefined" && module.exports)
+  module.exports = CommandExecutor;

@@ -3,7 +3,7 @@ const assert = require("assert");
 const crypto = require("crypto");
 const fs = require("fs");
 const vm = require("vm");
-const auth = require("./ws-auth");
+const auth = require("../src/ws-auth");
 
 (async () => {
   const token = auth.createNonce(), server = auth.createNonce(), client = auth.createNonce();

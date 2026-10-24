@@ -92,7 +92,8 @@ function createCaptureStore(deps = {}) {
   // Returns {started, captureId, tabId, domains, durationMs}; rolls back enabled domains on failure.
   async function start(args, clientId, ctx) {
     const { tabId, domains, durationMs } = args || {};
-    if (!Number.isInteger(tabId)) throw new Error("capture.start: need integer tabId");
+    if (!Number.isInteger(tabId))
+      throw new Error("capture.start: need integer tabId");
     const doms = [
       ...new Set(
         Array.isArray(domains) && domains.length ? domains : ["Network"],
@@ -234,4 +235,5 @@ function createCaptureStore(deps = {}) {
 
 const CaptureStore = { createCaptureStore };
 if (typeof globalThis !== "undefined") Object.assign(globalThis, CaptureStore);
-if (typeof module !== "undefined" && module.exports) module.exports = CaptureStore;
+if (typeof module !== "undefined" && module.exports)
+  module.exports = CaptureStore;

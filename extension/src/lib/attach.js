@@ -226,4 +226,5 @@ function createAttachManager(deps = {}) {
 
 const AttachManager = { createAttachManager };
 if (typeof globalThis !== "undefined") Object.assign(globalThis, AttachManager);
-if (typeof module !== "undefined" && module.exports) module.exports = AttachManager;
+if (typeof module !== "undefined" && module.exports)
+  module.exports = AttachManager;

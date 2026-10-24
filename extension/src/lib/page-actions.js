@@ -88,4 +88,5 @@ const PageActions = {
   actExpr,
 };
 if (typeof globalThis !== "undefined") Object.assign(globalThis, PageActions);
-if (typeof module !== "undefined" && module.exports) module.exports = PageActions;
+if (typeof module !== "undefined" && module.exports)
+  module.exports = PageActions;

@@ -4,7 +4,7 @@
 //   node extension/src/test-tablock.js
 
 const assert = require("assert");
-const { TabLock } = require("./tablock.js");
+const { TabLock } = require("../src/tablock.js");
 
 let passed = 0;
 function ok(name, fn) {

@@ -6,10 +6,10 @@ const assert = require("assert");
 const vm = require("vm");
 const path = require("path");
 
-const { snapshotExpr, actExpr } = require("./page-actions.js");
-const { createCdpTransport } = require("./cdp-transport.js");
-const { createCaptureStore } = require("./capture-store.js");
-const { createDiag } = require("./diag.js");
+const { snapshotExpr, actExpr } = require("../src/lib/page-actions.js");
+const { createCdpTransport } = require("../src/lib/cdp-transport.js");
+const { createCaptureStore } = require("../src/lib/capture-store.js");
+const { createDiag } = require("../src/lib/diag.js");
 
 let passed = 0;
 async function ok(name, fn) {

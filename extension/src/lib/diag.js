@@ -45,7 +45,8 @@ function createDiag(deps = {}) {
   // React to a CDP event. Only dialog events do work here; everything else is
   // left to the capture router.
   function onCdpEvent({ source, tabId, method, params }) {
-    if (method !== "Page.javascriptDialogOpening" || tabId == null) return false;
+    if (method !== "Page.javascriptDialogOpening" || tabId == null)
+      return false;
     noteDialog(tabId, params);
     log("warn", "page dialog opening — auto-accept", {
       tabId,
@@ -64,7 +65,9 @@ function createDiag(deps = {}) {
         "Page.handleJavaScriptDialog",
         { accept: true, promptText: String(params?.defaultPrompt || "") },
         DIALOG_TIMEOUT_MS,
-      ).catch((e) => log("warn", "auto-accept dialog failed", { error: String(e) }));
+      ).catch((e) =>
+        log("warn", "auto-accept dialog failed", { error: String(e) }),
+      );
     }
     return true;
   }
