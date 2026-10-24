@@ -26,7 +26,9 @@ const CDP_VERSION = "1.3";
 // undefined shape.
 function cdpMethodAllowed(method) {
   if (typeof method !== "string" || !method) {
-    throw new Error("cdpSend: method must be a non-empty string like 'Domain.method'");
+    throw new Error(
+      "cdpSend: method must be a non-empty string like 'Domain.method'",
+    );
   }
   return true;
 }
@@ -49,8 +51,13 @@ const targetByTab = new Map();
 const captureSessions = new Map();
 let captureSequence = 0;
 function captureUsesDomain(tabId, domain, exceptId) {
-  return [...captureSessions.values()].some((s) =>
-    s.captureId !== exceptId && s.active && s.tabId === tabId && s.domains.includes(domain));
+  return [...captureSessions.values()].some(
+    (s) =>
+      s.captureId !== exceptId &&
+      s.active &&
+      s.tabId === tabId &&
+      s.domains.includes(domain),
+  );
 }
 
 async function stopCapture(captureId, ctx) {
@@ -59,24 +66,34 @@ async function stopCapture(captureId, ctx) {
   if (s.stopping) return s.stopping;
   s.active = false;
   if (s.timer) clearTimeout(s.timer);
-  s.stopping = withTabLock(s.tabId, s.clientId, async () => {
-    try {
-      // Cleanup must never reattach a closed or explicitly detached target.
-      const st = tabs.get(s.tabId);
-      if (st?.attached) {
-        const target = st.targetId ? { targetId: st.targetId } : { tabId: s.tabId };
-        for (const d of s.domains) {
-          if (captureUsesDomain(s.tabId, d, captureId)) continue;
-          try { await cdpSend(target, d + ".disable", {}, 5000); } catch (_) {}
+  s.stopping = withTabLock(
+    s.tabId,
+    s.clientId,
+    async () => {
+      try {
+        // Cleanup must never reattach a closed or explicitly detached target.
+        const st = tabs.get(s.tabId);
+        if (st?.attached) {
+          const target = st.targetId
+            ? { targetId: st.targetId }
+            : { tabId: s.tabId };
+          for (const d of s.domains) {
+            if (captureUsesDomain(s.tabId, d, captureId)) continue;
+            try {
+              await cdpSend(target, d + ".disable", {}, 5000);
+            } catch (_) {}
+          }
         }
+      } finally {
+        captureSessions.delete(captureId);
+        if (!hasTabLease(s.tabId)) await doDetach(s.tabId);
       }
-    } finally {
-      captureSessions.delete(captureId);
-      if (!hasTabLease(s.tabId)) await doDetach(s.tabId);
-    }
-    log("info", "capture stopped", { captureId, tabId: s.tabId });
-    return { stopped: true, captureId, tabId: s.tabId };
-  }, 60000, ctx);
+      log("info", "capture stopped", { captureId, tabId: s.tabId });
+      return { stopped: true, captureId, tabId: s.tabId };
+    },
+    60000,
+    ctx,
+  );
   try {
     return await s.stopping;
   } catch (e) {
@@ -109,7 +126,10 @@ function reconcileDebugTargets() {
           s.attached = true;
           s.targetId = t.targetId;
           targetByTab.set(t.targetId, t.tabId);
-          log("info", "reconcile: adopted surviving attach", { tabId: t.tabId, targetId: t.targetId });
+          log("info", "reconcile: adopted surviving attach", {
+            tabId: t.tabId,
+            targetId: t.targetId,
+          });
         }
       }
     });
@@ -140,17 +160,24 @@ function getTab(tabId) {
 // ---------------- CDP bridge ----------------
 async function cdpSendOnce(target, method, params, timeoutMs) {
   cdpMethodAllowed(method);
-  const t = typeof target?.targetId === "string"
-    ? { targetId: target.targetId }
-    : target; // { tabId } form
+  const t =
+    typeof target?.targetId === "string"
+      ? { targetId: target.targetId }
+      : target; // { tabId } form
   // Race the CDP call against a real timer. A hanging sendCommand must not
   // wedge the tab lock forever (the caller holds it for the whole cdpSend).
   let timerId;
   const timeout = new Promise((_, rej) => {
-    timerId = setTimeout(() => rej(new Error(`CDP timeout: ${method}`)), timeoutMs);
+    timerId = setTimeout(
+      () => rej(new Error(`CDP timeout: ${method}`)),
+      timeoutMs,
+    );
   });
   try {
-    return await Promise.race([chrome.debugger.sendCommand(t, method, params || {}), timeout]);
+    return await Promise.race([
+      chrome.debugger.sendCommand(t, method, params || {}),
+      timeout,
+    ]);
   } finally {
     clearTimeout(timerId);
   }
@@ -164,17 +191,24 @@ async function cdpSend(target, method, params, timeoutMs = 15000) {
   try {
     return await cdpSendOnce(target, method, params, timeoutMs);
   } catch (e) {
-    if (method === "Runtime.evaluate" && /CDP timeout/.test(String((e && e.message) || e))) {
-      log("warn", "Runtime.evaluate timeout — suspected modal dialog, retrying once", {
-        waitMs: DIALOG_RETRY_WAIT_MS,
-      });
+    if (
+      method === "Runtime.evaluate" &&
+      /CDP timeout/.test(String((e && e.message) || e))
+    ) {
+      log(
+        "warn",
+        "Runtime.evaluate timeout — suspected modal dialog, retrying once",
+        {
+          waitMs: DIALOG_RETRY_WAIT_MS,
+        },
+      );
       await new Promise((r) => setTimeout(r, DIALOG_RETRY_WAIT_MS));
       try {
         return await cdpSendOnce(target, method, params, timeoutMs);
       } catch (e2) {
         throw new Error(
           "Runtime.evaluate 超时两次（疑似页面原生弹窗卡住该标签）——close 该 tab 或人工处理弹窗后重试：" +
-            String((e2 && e2.message) || e2)
+            String((e2 && e2.message) || e2),
         );
       }
     }
@@ -194,12 +228,14 @@ function lockMsForCdp(cdpTimeoutMs, method) {
 // status=complete 即返回 loaded:true；waitMs 到点放行（loaded:false）；标签被
 // 关也放行（gone:true）。waitMs<=0 跳过轮询。
 async function waitTabComplete(tabId, waitMs) {
-  if (!Number.isFinite(waitMs) || waitMs <= 0) return { loaded: false, waitMs: 0 };
+  if (!Number.isFinite(waitMs) || waitMs <= 0)
+    return { loaded: false, waitMs: 0 };
   const t0 = Date.now();
   for (;;) {
     try {
       const t = await chrome.tabs.get(tabId);
-      if (t.status === "complete") return { loaded: true, waitMs: Date.now() - t0 };
+      if (t.status === "complete")
+        return { loaded: true, waitMs: Date.now() - t0 };
     } catch (_) {
       return { loaded: false, waitMs: Date.now() - t0, gone: true };
     }
@@ -223,19 +259,26 @@ async function doAttach(tabId) {
     // "Another debugger is already attached"。收养后 sendCommand 若可用
     // （本扩展自己的会话）即可继续工作；若是外部调试器占用，后续 CDP
     // 调用会给出明确的 "Debugger is not attached" 错误。
-    const pre = ((await chrome.debugger.getTargets()) || []).find((x) => x.tabId === tabId);
+    const pre = ((await chrome.debugger.getTargets()) || []).find(
+      (x) => x.tabId === tabId,
+    );
     if (pre && pre.attached) {
       s.attached = true;
       s.targetId = pre.targetId;
       targetByTab.set(pre.targetId, tabId);
-      log("info", "attach: adopted surviving debugger session", { tabId, targetId: pre.targetId });
+      log("info", "attach: adopted surviving debugger session", {
+        tabId,
+        targetId: pre.targetId,
+      });
       return s;
     }
     await chrome.debugger.attach({ tabId }, CDP_VERSION);
     const targets = await chrome.debugger.getTargets();
     const t = (targets || []).find((x) => x.tabId === tabId);
     if (!t || !t.attached) {
-      s.attachError = t ? "getTargets: attached=false" : "getTargets: tab not found";
+      s.attachError = t
+        ? "getTargets: attached=false"
+        : "getTargets: tab not found";
       log("warn", "attach failed", { tabId, error: s.attachError });
       return s;
     }
@@ -276,8 +319,12 @@ async function ensureAttached(tabId) {
   const st = getTab(tabId);
   if (!st.attached) {
     const why = st.attachError ? " (" + st.attachError + ")" : "";
-    throw new Error("ensureAttached: attach did not stick for tab " + tabId + why +
-      " — 若提示 Another debugger is already attached：先关掉该标签的 DevTools / 其它占调试器的扩展，再重试");
+    throw new Error(
+      "ensureAttached: attach did not stick for tab " +
+        tabId +
+        why +
+        " — 若提示 Another debugger is already attached：先关掉该标签的 DevTools / 其它占调试器的扩展，再重试",
+    );
   }
   return st;
 }
@@ -287,7 +334,10 @@ async function doDetach(tabId) {
   const s = getTab(tabId);
   if (!s.attached) return;
   if (s.targetId) {
-    await cdpSend({ targetId: s.targetId }, "Emulation.clearDeviceMetricsOverride").catch(() => {});
+    await cdpSend(
+      { targetId: s.targetId },
+      "Emulation.clearDeviceMetricsOverride",
+    ).catch(() => {});
   }
   try {
     await chrome.debugger.detach({ tabId });
@@ -342,12 +392,28 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       message: String(params?.message || "").slice(0, 200),
       ts: Date.now(),
     });
-    if (lastDialogs.size > 50) lastDialogs.delete(lastDialogs.keys().next().value);
-    log("warn", "page dialog opening — auto-accept", { tabId, type: params?.type, message: params?.message });
-    const tgt = source?.tabId != null ? { tabId: source.tabId } : source?.targetId ? { targetId: source.targetId } : null;
+    if (lastDialogs.size > 50)
+      lastDialogs.delete(lastDialogs.keys().next().value);
+    log("warn", "page dialog opening — auto-accept", {
+      tabId,
+      type: params?.type,
+      message: params?.message,
+    });
+    const tgt =
+      source?.tabId != null
+        ? { tabId: source.tabId }
+        : source?.targetId
+          ? { targetId: source.targetId }
+          : null;
     if (tgt) {
-      cdpSend(tgt, "Page.handleJavaScriptDialog", { accept: true, promptText: String(params?.defaultPrompt || "") }, 5000)
-        .catch((e) => log("warn", "auto-accept dialog failed", { error: String(e) }));
+      cdpSend(
+        tgt,
+        "Page.handleJavaScriptDialog",
+        { accept: true, promptText: String(params?.defaultPrompt || "") },
+        5000,
+      ).catch((e) =>
+        log("warn", "auto-accept dialog failed", { error: String(e) }),
+      );
     }
   }
   // 转发给订阅了该 tab CDP 事件的 agent（capture session）。
@@ -357,7 +423,18 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       if (!s.domains.some((d) => method.indexOf(d + ".") === 0)) continue;
       // 定向推给发起捕获的那条 socket（该 socket 断开时 session 已被清理，不会漏推）
       if (s.ws && s.ws.readyState === 1) {
-        try { s.ws.send(JSON.stringify({ type: "event.push", captureId: s.captureId, clientId: s.clientId, tabId, method, params })); } catch (_) {}
+        try {
+          s.ws.send(
+            JSON.stringify({
+              type: "event.push",
+              captureId: s.captureId,
+              clientId: s.clientId,
+              tabId,
+              method,
+              params,
+            }),
+          );
+        } catch (_) {}
       }
     }
   }
@@ -388,8 +465,10 @@ function acquireLease(clientId, tabId) {
 // Release this client's hold on a tab. The physical detach fires only when NO
 // other client still leases the tab, and it is done under the tab lock.
 function hasTabLease(tabId) {
-  return [...clientLeases.values()].some((l) => l.has(tabId)) ||
-    [...captureSessions.values()].some((s) => s.tabId === tabId);
+  return (
+    [...clientLeases.values()].some((l) => l.has(tabId)) ||
+    [...captureSessions.values()].some((s) => s.tabId === tabId)
+  );
 }
 
 async function releaseLease(clientId, tabId) {
@@ -414,11 +493,21 @@ async function releaseLease(clientId, tabId) {
  */
 function beginCommand(ctx) {
   if (!ctx) return;
-  if (ctx.ws?.__retired || (ctx.authenticationRequired && !ctx.ws?.__authenticated)) {
+  if (
+    ctx.ws?.__retired ||
+    (ctx.authenticationRequired && !ctx.ws?.__authenticated)
+  ) {
     throw new Error("command connection is no longer authenticated");
   }
-  if (ctx.cancelled || (ctx.deadlineAt != null && Date.now() >= ctx.deadlineAt)) {
-    throw new Error(ctx.cancelled ? "command cancelled before execution" : "command deadline expired before execution");
+  if (
+    ctx.cancelled ||
+    (ctx.deadlineAt != null && Date.now() >= ctx.deadlineAt)
+  ) {
+    throw new Error(
+      ctx.cancelled
+        ? "command cancelled before execution"
+        : "command deadline expired before execution",
+    );
   }
   ctx.started = true;
 }
@@ -450,7 +539,9 @@ const EL_CANDIDATE_SEL =
 const EL_COLLECTOR_SRC =
   "function labelOf(e){return (e.getAttribute('aria-label')||e.getAttribute('placeholder')||e.getAttribute('name')) || String((e.innerText||e.textContent||'').trim()).slice(0,24);}" +
   "function __elNodes(){" +
-  "var SEL=" + JSON.stringify(EL_CANDIDATE_SEL) + ";" +
+  "var SEL=" +
+  JSON.stringify(EL_CANDIDATE_SEL) +
+  ";" +
   "var out=[];" +
   "function collect(root){var els=root.querySelectorAll(SEL);for(var k=0;k<els.length;k++)out.push(els[k]);" +
   "var hosts=root.querySelectorAll('*');for(var h=0;h<hosts.length;h++){var sr=null;try{sr=hosts[h].shadowRoot;}catch(_){}" +
@@ -462,9 +553,12 @@ const EL_COLLECTOR_SRC =
 function snapshotExpr(max) {
   const m = Number(max) > 0 ? Number(max) : 50;
   return (
-    "(function(){" + EL_COLLECTOR_SRC +
+    "(function(){" +
+    EL_COLLECTOR_SRC +
     "var nodes=__elNodes();" +
-    "var items=nodes.slice(0," + m + ").map(function(e,i){return {i:i,tag:e.tagName.toLowerCase(),role:e.getAttribute('role')||'',label:labelOf(e)};});" +
+    "var items=nodes.slice(0," +
+    m +
+    ").map(function(e,i){return {i:i,tag:e.tagName.toLowerCase(),role:e.getAttribute('role')||'',label:labelOf(e)};});" +
     "return JSON.stringify({url:location.href,ts:Date.now(),total:nodes.length,count:items.length,items:items});})()"
   );
 }
@@ -483,7 +577,9 @@ const ACT_QUIET_DIALOGS_SRC =
 
 function actExpr(el, act, typeText) {
   return (
-    "(function(el,act,txt){" + EL_COLLECTOR_SRC + ACT_QUIET_DIALOGS_SRC +
+    "(function(el,act,txt){" +
+    EL_COLLECTOR_SRC +
+    ACT_QUIET_DIALOGS_SRC +
     "var nodes=__elNodes();" +
     "if(!(el.i>=0&&el.i<nodes.length)) return JSON.stringify({found:false,reason:'索引越界：页面已变化，请重新 snapshot'});" +
     "var target=nodes[el.i],label=labelOf(target);" +
@@ -492,7 +588,13 @@ function actExpr(el, act, typeText) {
     "if(act==='click'){withQuietDialogs(function(){target.click();});return JSON.stringify({found:true,clicked:label,rect:[Math.round(target.getBoundingClientRect().x),Math.round(target.getBoundingClientRect().y)]});}" +
     "if(act==='type'){var clear=typeof txt==='string'&&txt.indexOf('__CLEAR__')===0;if(clear){txt=String(txt).slice(9);try{target.value='';}catch(_){}}var proto=target.tagName==='TEXTAREA'?window.HTMLTextAreaElement.prototype:window.HTMLInputElement.prototype;var d=Object.getOwnPropertyDescriptor(proto,'value');if(d&&d.set){d.set.call(target,txt);}else{target.value=txt;}withQuietDialogs(function(){target.dispatchEvent(new Event('input',{bubbles:true}));target.dispatchEvent(new Event('change',{bubbles:true}));});return JSON.stringify({found:true,typed:target.value});}" +
     "return JSON.stringify({found:false,reason:'未知动作 '+JSON.stringify(act)});})" +
-    "(" + JSON.stringify(el) + "," + JSON.stringify(act) + "," + JSON.stringify(typeText == null ? "" : typeText) + ")"
+    "(" +
+    JSON.stringify(el) +
+    "," +
+    JSON.stringify(act) +
+    "," +
+    JSON.stringify(typeText == null ? "" : typeText) +
+    ")"
   );
 }
 
@@ -500,54 +602,114 @@ async function execAgentCmd(cmd, args, clientId, ctx) {
   switch (cmd) {
     case "tabs": {
       const all = await chrome.tabs.query({});
-      return all.map((t) => ({ tabId: t.id, url: t.url, title: t.title, active: t.active }));
+      return all.map((t) => ({
+        tabId: t.id,
+        url: t.url,
+        title: t.title,
+        active: t.active,
+      }));
     }
     case "capture.start": {
       const { tabId, domains, durationMs } = args || {};
-      if (!Number.isInteger(tabId)) throw new Error("capture.start: need integer tabId");
-      const doms = [...new Set(Array.isArray(domains) && domains.length ? domains : ["Network"])];
+      if (!Number.isInteger(tabId))
+        throw new Error("capture.start: need integer tabId");
+      const doms = [
+        ...new Set(
+          Array.isArray(domains) && domains.length ? domains : ["Network"],
+        ),
+      ];
       if (!doms.every((d) => typeof d === "string" && /^[A-Za-z]+$/.test(d))) {
         throw new Error("capture.start: invalid domain");
       }
-      const dur = Number.isFinite(durationMs) && durationMs > 0 ? Math.min(durationMs, 2147483647) : 30000;
+      const dur =
+        Number.isFinite(durationMs) && durationMs > 0
+          ? Math.min(durationMs, 2147483647)
+          : 30000;
       if (ctx?.ws == null) throw new Error("capture.start: WS channel only");
-      return withTabLock(tabId, clientId, async () => {
-        for (const other of captureSessions.values()) {
-          if (other.active && other.clientId === clientId && other.tabId === tabId) {
-            throw new Error("capture.start: a capture session is already active for this tab+client (stop it first)");
+      return withTabLock(
+        tabId,
+        clientId,
+        async () => {
+          for (const other of captureSessions.values()) {
+            if (
+              other.active &&
+              other.clientId === clientId &&
+              other.tabId === tabId
+            ) {
+              throw new Error(
+                "capture.start: a capture session is already active for this tab+client (stop it first)",
+              );
+            }
           }
-        }
-        const enabled = [];
-        const s = await ensureAttached(tabId);
-        const target = s.targetId ? { targetId: s.targetId } : { tabId };
-        try {
-          for (const d of doms) {
-            if (captureUsesDomain(tabId, d)) continue;
-            await cdpSend(target, d + ".enable", {}, 15000);
-            enabled.push(d);
+          const enabled = [];
+          const s = await ensureAttached(tabId);
+          const target = s.targetId ? { targetId: s.targetId } : { tabId };
+          try {
+            for (const d of doms) {
+              if (captureUsesDomain(tabId, d)) continue;
+              await cdpSend(target, d + ".enable", {}, 15000);
+              enabled.push(d);
+            }
+            const captureId =
+              "cap-" + Date.now().toString(36) + "-" + ++captureSequence;
+            const sess = {
+              captureId,
+              clientId,
+              tabId,
+              domains: doms,
+              ws: ctx.ws,
+              wsPort: ctx.wsPort,
+              active: true,
+              timer: null,
+            };
+            sess.timer = setTimeout(
+              () =>
+                stopCapture(captureId).catch((e) =>
+                  log("warn", "capture cleanup failed", { error: String(e) }),
+                ),
+              dur,
+            );
+            captureSessions.set(captureId, sess);
+            log("info", "capture started", {
+              captureId,
+              tabId,
+              domains: doms,
+              durationMs: dur,
+            });
+            return {
+              started: true,
+              captureId,
+              tabId,
+              domains: doms,
+              durationMs: dur,
+            };
+          } catch (e) {
+            for (const d of enabled) {
+              if (!captureUsesDomain(tabId, d))
+                await cdpSend(target, d + ".disable", {}, 5000).catch(() => {});
+            }
+            if (!hasTabLease(tabId)) await doDetach(tabId);
+            throw e;
           }
-          const captureId = "cap-" + Date.now().toString(36) + "-" + (++captureSequence);
-          const sess = { captureId, clientId, tabId, domains: doms, ws: ctx.ws, wsPort: ctx.wsPort, active: true, timer: null };
-          sess.timer = setTimeout(() => stopCapture(captureId).catch((e) => log("warn", "capture cleanup failed", { error: String(e) })), dur);
-          captureSessions.set(captureId, sess);
-          log("info", "capture started", { captureId, tabId, domains: doms, durationMs: dur });
-          return { started: true, captureId, tabId, domains: doms, durationMs: dur };
-        } catch (e) {
-          for (const d of enabled) {
-            if (!captureUsesDomain(tabId, d)) await cdpSend(target, d + ".disable", {}, 5000).catch(() => {});
-          }
-          if (!hasTabLease(tabId)) await doDetach(tabId);
-          throw e;
-        }
-      }, 60000, ctx);
+        },
+        60000,
+        ctx,
+      );
     }
     case "capture.stop": {
       const { tabId, captureId } = args || {};
       const sess = captureId
         ? captureSessions.get(captureId)
-        : [...captureSessions.values()].find((s) => s.active && s.clientId === clientId && s.tabId === tabId && (!ctx?.ws || s.ws === ctx.ws));
+        : [...captureSessions.values()].find(
+            (s) =>
+              s.active &&
+              s.clientId === clientId &&
+              s.tabId === tabId &&
+              (!ctx?.ws || s.ws === ctx.ws),
+          );
       if (!sess) return { stopped: false, reason: "no active capture session" };
-      if (sess.clientId !== clientId || (ctx?.ws && sess.ws !== ctx.ws)) throw new Error("capture.stop: session belongs to another client");
+      if (sess.clientId !== clientId || (ctx?.ws && sess.ws !== ctx.ws))
+        throw new Error("capture.stop: session belongs to another client");
       beginCommand(ctx);
       return stopCapture(sess.captureId);
     }
@@ -555,68 +717,137 @@ async function execAgentCmd(cmd, args, clientId, ctx) {
     // 定位（执行前重解析校验，stale 则报不执行）。
     case "snapshot": {
       const { tabId, max } = args || {};
-      if (typeof tabId !== "number") throw new Error("snapshot: tabId must be a number");
-      return await withTabLock(tabId, clientId, async () => {
-        acquireLease(clientId, tabId);
-        const s = await ensureAttached(tabId);
-        const target = s.targetId ? { targetId: s.targetId } : { tabId };
-        const r = await cdpSend(target, "Runtime.evaluate", { expression: snapshotExpr(max), returnByValue: true }, 15000);
-        const v = r && r.result ? r.result.value : null;
-        return v != null ? JSON.parse(v) : { error: "snapshot evaluate returned nothing" };
-      }, 45000, ctx); // 锁须覆盖 evaluate 的弹窗重试（2×15s+6s）
+      if (typeof tabId !== "number")
+        throw new Error("snapshot: tabId must be a number");
+      return await withTabLock(
+        tabId,
+        clientId,
+        async () => {
+          acquireLease(clientId, tabId);
+          const s = await ensureAttached(tabId);
+          const target = s.targetId ? { targetId: s.targetId } : { tabId };
+          const r = await cdpSend(
+            target,
+            "Runtime.evaluate",
+            { expression: snapshotExpr(max), returnByValue: true },
+            15000,
+          );
+          const v = r && r.result ? r.result.value : null;
+          return v != null
+            ? JSON.parse(v)
+            : { error: "snapshot evaluate returned nothing" };
+        },
+        45000,
+        ctx,
+      ); // 锁须覆盖 evaluate 的弹窗重试（2×15s+6s）
     }
     case "click-el": {
       const { tabId, el } = args || {};
-      if (typeof tabId !== "number" || !el || typeof el.i !== "number") throw new Error("click-el: need tabId + el{i,label}（来自 snapshot）");
-      return await withTabLock(tabId, clientId, async () => {
-        acquireLease(clientId, tabId);
-        const s = await ensureAttached(tabId);
-        const target = s.targetId ? { targetId: s.targetId } : { tabId };
-        const r = await cdpSend(target, "Runtime.evaluate", { expression: actExpr(el, "click", ""), returnByValue: true }, 15000);
-        const v = r && r.result ? r.result.value : null;
-        return v != null ? JSON.parse(v) : { found: false, reason: "evaluate returned nothing" };
-      }, 45000, ctx); // 锁须覆盖 evaluate 的弹窗重试（2×15s+6s）
+      if (typeof tabId !== "number" || !el || typeof el.i !== "number")
+        throw new Error("click-el: need tabId + el{i,label}（来自 snapshot）");
+      return await withTabLock(
+        tabId,
+        clientId,
+        async () => {
+          acquireLease(clientId, tabId);
+          const s = await ensureAttached(tabId);
+          const target = s.targetId ? { targetId: s.targetId } : { tabId };
+          const r = await cdpSend(
+            target,
+            "Runtime.evaluate",
+            { expression: actExpr(el, "click", ""), returnByValue: true },
+            15000,
+          );
+          const v = r && r.result ? r.result.value : null;
+          return v != null
+            ? JSON.parse(v)
+            : { found: false, reason: "evaluate returned nothing" };
+        },
+        45000,
+        ctx,
+      ); // 锁须覆盖 evaluate 的弹窗重试（2×15s+6s）
     }
     case "type-el": {
       const { tabId, el, text, clear } = args || {};
-      if (typeof tabId !== "number" || !el || typeof el.i !== "number" || typeof text !== "string") throw new Error("type-el: need tabId + el + text");
-      return await withTabLock(tabId, clientId, async () => {
-        acquireLease(clientId, tabId);
-        const s = await ensureAttached(tabId);
-        const target = s.targetId ? { targetId: s.targetId } : { tabId };
-        const payload = clear ? "__CLEAR__" + text : text;
-        const r = await cdpSend(target, "Runtime.evaluate", { expression: actExpr(el, "type", payload), returnByValue: true }, 15000);
-        const v = r && r.result ? r.result.value : null;
-        return v != null ? JSON.parse(v) : { found: false, reason: "evaluate returned nothing" };
-      }, 45000, ctx); // 锁须覆盖 evaluate 的弹窗重试（2×15s+6s）
+      if (
+        typeof tabId !== "number" ||
+        !el ||
+        typeof el.i !== "number" ||
+        typeof text !== "string"
+      )
+        throw new Error("type-el: need tabId + el + text");
+      return await withTabLock(
+        tabId,
+        clientId,
+        async () => {
+          acquireLease(clientId, tabId);
+          const s = await ensureAttached(tabId);
+          const target = s.targetId ? { targetId: s.targetId } : { tabId };
+          const payload = clear ? "__CLEAR__" + text : text;
+          const r = await cdpSend(
+            target,
+            "Runtime.evaluate",
+            { expression: actExpr(el, "type", payload), returnByValue: true },
+            15000,
+          );
+          const v = r && r.result ? r.result.value : null;
+          return v != null
+            ? JSON.parse(v)
+            : { found: false, reason: "evaluate returned nothing" };
+        },
+        45000,
+        ctx,
+      ); // 锁须覆盖 evaluate 的弹窗重试（2×15s+6s）
     }
     case "cdp": {
       const { tabId, method, params } = args || {};
-      if (typeof tabId !== "number") throw new Error("cdp: tabId must be a number");
+      if (typeof tabId !== "number")
+        throw new Error("cdp: tabId must be a number");
       const cdpTimeout = args.timeoutMs || 20000;
-      return await withTabLock(tabId, clientId, async () => {
-        acquireLease(clientId, tabId);
-        const s = await ensureAttached(tabId);
-        const target = s.targetId ? { targetId: s.targetId } : { tabId };
-        return cdpSend(target, method, params, cdpTimeout);
-      }, lockMsForCdp(cdpTimeout, method), ctx);
+      return await withTabLock(
+        tabId,
+        clientId,
+        async () => {
+          acquireLease(clientId, tabId);
+          const s = await ensureAttached(tabId);
+          const target = s.targetId ? { targetId: s.targetId } : { tabId };
+          return cdpSend(target, method, params, cdpTimeout);
+        },
+        lockMsForCdp(cdpTimeout, method),
+        ctx,
+      );
     }
     case "setfile": {
       const { tabId, selector, files } = args || {};
-      if (typeof tabId !== "number") throw new Error("setfile: tabId must be a number");
-      if (typeof selector !== "string" || !Array.isArray(files)) throw new Error("setfile: need selector + files[]");
-      return await withTabLock(tabId, clientId, async () => {
-        acquireLease(clientId, tabId);
-        const s = await ensureAttached(tabId);
-        const target = s.targetId ? { targetId: s.targetId } : { tabId };
-        const doc = await cdpSend(target, "DOM.getDocument", { depth: 1 });
-        const rootId = doc && doc.root && doc.root.nodeId;
-        const q = await cdpSend(target, "DOM.querySelectorAll", { nodeId: rootId, selector });
-        const ids = (q && q.nodeIds) || [];
-        if (!ids.length) throw new Error("setfile: no element matches " + selector);
-        await cdpSend(target, "DOM.setFileInputFiles", { files, nodeId: ids[0] });
-        return { ok: true, matched: ids.length };
-      }, 30000, ctx);
+      if (typeof tabId !== "number")
+        throw new Error("setfile: tabId must be a number");
+      if (typeof selector !== "string" || !Array.isArray(files))
+        throw new Error("setfile: need selector + files[]");
+      return await withTabLock(
+        tabId,
+        clientId,
+        async () => {
+          acquireLease(clientId, tabId);
+          const s = await ensureAttached(tabId);
+          const target = s.targetId ? { targetId: s.targetId } : { tabId };
+          const doc = await cdpSend(target, "DOM.getDocument", { depth: 1 });
+          const rootId = doc && doc.root && doc.root.nodeId;
+          const q = await cdpSend(target, "DOM.querySelectorAll", {
+            nodeId: rootId,
+            selector,
+          });
+          const ids = (q && q.nodeIds) || [];
+          if (!ids.length)
+            throw new Error("setfile: no element matches " + selector);
+          await cdpSend(target, "DOM.setFileInputFiles", {
+            files,
+            nodeId: ids[0],
+          });
+          return { ok: true, matched: ids.length };
+        },
+        30000,
+        ctx,
+      );
     }
     case "navigate": {
       // 用 chrome.tabs.update 导航（不需要 attach）：edge:// 等内部页面
@@ -625,7 +856,8 @@ async function execAgentCmd(cmd, args, clientId, ctx) {
       // 默认等 load（T-30：不等 load 时慢站立刻 run 拿到空 DOM）；
       // waitMs<=0 跳过等待。
       const { tabId, url } = args || {};
-      if (typeof tabId !== "number" || typeof url !== "string") throw new Error("navigate: need numeric tabId + string url");
+      if (typeof tabId !== "number" || typeof url !== "string")
+        throw new Error("navigate: need numeric tabId + string url");
       beginCommand(ctx);
       await chrome.tabs.update(tabId, { url });
       const waitMs = args.waitMs == null ? 15000 : Number(args.waitMs);
@@ -646,48 +878,81 @@ async function execAgentCmd(cmd, args, clientId, ctx) {
       // 跨源 iframe 内容触达不了（OOPIF 硬限制，T-30）时的回退：从
       // Page.getFrameTree 找 URL 匹配的子帧，直接开成顶层标签（登录态同源带走）。
       const { tabId, urlPattern } = args || {};
-      if (typeof tabId !== "number") throw new Error("open-frame: tabId must be a number");
-      if (typeof urlPattern !== "string" || !urlPattern) throw new Error("open-frame: need urlPattern regex string");
+      if (typeof tabId !== "number")
+        throw new Error("open-frame: tabId must be a number");
+      if (typeof urlPattern !== "string" || !urlPattern)
+        throw new Error("open-frame: need urlPattern regex string");
       const re = new RegExp(urlPattern, "i");
-      return await withTabLock(tabId, clientId, async () => {
-        acquireLease(clientId, tabId);
-        const s = await ensureAttached(tabId);
-        const target = s.targetId ? { targetId: s.targetId } : { tabId };
-        const ft = await cdpSend(target, "Page.getFrameTree", {}, 15000);
-        const frames = [];
-        (function walk(node) {
-          if (!node) return;
-          if (node.frame) frames.push(node.frame);
-          for (const c of node.childFrames || []) walk(c);
-        })(ft && ft.frameTree);
-        const hit = frames.find((f) => re.test(f.url || ""));
-        if (!hit) {
-          return { opened: false, reason: "no frame matches " + urlPattern, frames: frames.map((f) => f.url) };
-        }
-        const t = await chrome.tabs.create({ url: hit.url, active: true });
-        const load = await waitTabComplete(t.id, 15000);
-        return { opened: true, tabId: t.id, frameUrl: hit.url, frameOrigin: hit.securityOrigin || "", ...load };
-      }, 45000, ctx);
+      return await withTabLock(
+        tabId,
+        clientId,
+        async () => {
+          acquireLease(clientId, tabId);
+          const s = await ensureAttached(tabId);
+          const target = s.targetId ? { targetId: s.targetId } : { tabId };
+          const ft = await cdpSend(target, "Page.getFrameTree", {}, 15000);
+          const frames = [];
+          (function walk(node) {
+            if (!node) return;
+            if (node.frame) frames.push(node.frame);
+            for (const c of node.childFrames || []) walk(c);
+          })(ft && ft.frameTree);
+          const hit = frames.find((f) => re.test(f.url || ""));
+          if (!hit) {
+            return {
+              opened: false,
+              reason: "no frame matches " + urlPattern,
+              frames: frames.map((f) => f.url),
+            };
+          }
+          const t = await chrome.tabs.create({ url: hit.url, active: true });
+          const load = await waitTabComplete(t.id, 15000);
+          return {
+            opened: true,
+            tabId: t.id,
+            frameUrl: hit.url,
+            frameOrigin: hit.securityOrigin || "",
+            ...load,
+          };
+        },
+        45000,
+        ctx,
+      );
     }
     case "close": {
-      if (typeof args?.tabId !== "number") throw new Error("close: need numeric tabId");
+      if (typeof args?.tabId !== "number")
+        throw new Error("close: need numeric tabId");
       beginCommand(ctx);
       await chrome.tabs.remove(args.tabId);
       return { closed: true, tabId: args.tabId };
     }
     case "attach": {
-      if (typeof args?.tabId !== "number") throw new Error("attach: tabId must be a number");
-      await withTabLock(args.tabId, clientId, () => {
-        acquireLease(clientId, args.tabId);
-        return ensureAttached(args.tabId);
-      }, 60000, ctx);
+      if (typeof args?.tabId !== "number")
+        throw new Error("attach: tabId must be a number");
+      await withTabLock(
+        args.tabId,
+        clientId,
+        () => {
+          acquireLease(clientId, args.tabId);
+          return ensureAttached(args.tabId);
+        },
+        60000,
+        ctx,
+      );
       return { attached: true, tabId: args.tabId };
     }
     case "detach": {
-      if (typeof args?.tabId !== "number") throw new Error("detach: need numeric tabId");
+      if (typeof args?.tabId !== "number")
+        throw new Error("detach: need numeric tabId");
       if (args.force) {
         // 强制物理 detach（清掉本扩展自己残留的 debugger 会话）
-        await withTabLock(args.tabId, clientId, () => doDetach(args.tabId), 60000, ctx);
+        await withTabLock(
+          args.tabId,
+          clientId,
+          () => doDetach(args.tabId),
+          60000,
+          ctx,
+        );
         return { detached: true, forced: true, tabId: args.tabId };
       }
       beginCommand(ctx);
@@ -697,18 +962,28 @@ async function execAgentCmd(cmd, args, clientId, ctx) {
     case "diag": {
       const [diagRes, wsRes] = await Promise.all([
         new Promise((resolve) => {
-          chrome.storage.local.get(["wbDiagLog"], (r) => resolve(r?.wbDiagLog || []));
+          chrome.storage.local.get(["wbDiagLog"], (r) =>
+            resolve(r?.wbDiagLog || []),
+          );
         }),
         new Promise((resolve) => {
-          chrome.storage.local.get(["wbWsLog"], (r) => resolve(r?.wbWsLog || []));
+          chrome.storage.local.get(["wbWsLog"], (r) =>
+            resolve(r?.wbWsLog || []),
+          );
         }),
       ]);
       return {
         wsAgents: agentWsPortsUp(),
-        clients: [...clientLeases.entries()].map(([cid, set]) => ({ clientId: cid, tabs: [...set] })),
+        clients: [...clientLeases.entries()].map(([cid, set]) => ({
+          clientId: cid,
+          tabs: [...set],
+        })),
         log: diagRes,
         wsLog: wsRes,
-        dialogs: [...lastDialogs.entries()].map(([tid, d]) => ({ tabId: tid, ...d })),
+        dialogs: [...lastDialogs.entries()].map(([tid, d]) => ({
+          tabId: tid,
+          ...d,
+        })),
       };
     }
     default:
@@ -723,7 +998,10 @@ async function execAgentCmd(cmd, args, clientId, ctx) {
 // T-33：多会话并发下 10 个端口不够（每个会话的 serve/--keep 桥 + one-shot 直连
 // 各占一个），扩到 20 个。agent 侧默认段须与此一致（WB_AGENT_WS_START/END
 // 覆盖 agent 段时，扩展仍按本数组拨号——超出 9521-9540 的自定义段需手动同步）。
-const AGENT_WS_PORTS = [9521, 9522, 9523, 9524, 9525, 9526, 9527, 9528, 9529, 9530, 9531, 9532, 9533, 9534, 9535, 9536, 9537, 9538, 9539, 9540];
+const AGENT_WS_PORTS = [
+  9521, 9522, 9523, 9524, 9525, 9526, 9527, 9528, 9529, 9530, 9531, 9532, 9533,
+  9534, 9535, 9536, 9537, 9538, 9539, 9540,
+];
 /** port -> Set<WebSocket>：同一 agent server 端口上可能并发挂多条 socket
  * （常驻 bridge daemon + 临时 one-shot 客户端）。每条 socket 独立管理
  * 生命周期与结果路由，互不顶替。 */
@@ -761,13 +1039,16 @@ function disconnectClient(ws, clientId, releaseLeases) {
   }
   const cleanup = (async () => {
     await Promise.allSettled(pending);
-    await Promise.allSettled([...captureSessions.values()]
-      .filter((s) => s.clientId === clientId && s.ws === ws)
-      .map((s) => stopCapture(s.captureId)));
+    await Promise.allSettled(
+      [...captureSessions.values()]
+        .filter((s) => s.clientId === clientId && s.ws === ws)
+        .map((s) => stopCapture(s.captureId)),
+    );
     // Another socket is never permitted to claim this identity until cleanup
     // completes, including when pairing rotates or the bridge reconnects.
     if (releaseLeases && wsClientOwners.get(clientId) === ws) {
-      for (const tabId of [...(clientLeases.get(clientId) || [])]) await releaseLease(clientId, tabId);
+      for (const tabId of [...(clientLeases.get(clientId) || [])])
+        await releaseLease(clientId, tabId);
     }
     if (wsClientOwners.get(clientId) === ws) wsClientOwners.delete(clientId);
   })().finally(() => ws.__disconnecting.delete(clientId));
@@ -777,7 +1058,8 @@ function disconnectClient(ws, clientId, releaseLeases) {
 
 function claimWsClient(ws, clientId) {
   const owner = wsClientOwners.get(clientId);
-  if (owner && owner !== ws) throw new Error("clientId is active on another connection");
+  if (owner && owner !== ws)
+    throw new Error("clientId is active on another connection");
   wsClientOwners.set(clientId, ws);
 }
 
@@ -786,7 +1068,9 @@ function claimWsClient(ws, clientId) {
 function wsLog(line) {
   try {
     chrome.storage.local.get(["wbWsLog"], (res) => {
-      const arr = (res?.wbWsLog || []).concat([new Date().toISOString().slice(5, 24) + " " + line]);
+      const arr = (res?.wbWsLog || []).concat([
+        new Date().toISOString().slice(5, 24) + " " + line,
+      ]);
       chrome.storage.local.set({ wbWsLog: arr.slice(-40) });
     });
   } catch (_) {}
@@ -794,7 +1078,11 @@ function wsLog(line) {
 
 function agentWsPortsUp() {
   return [...agentWs.entries()]
-    .filter(([, set]) => [...set].some((ws) => ws.readyState === WebSocket.OPEN && ws.__authenticated))
+    .filter(([, set]) =>
+      [...set].some(
+        (ws) => ws.readyState === WebSocket.OPEN && ws.__authenticated,
+      ),
+    )
     .map(([p]) => p);
 }
 
@@ -802,7 +1090,12 @@ function agentWsPortsUp() {
 // 同端口的其它 socket 不受影响）。best-effort，socket 已死则丢弃。
 function wsSendTo(ws, obj) {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    try { ws.send(JSON.stringify(obj)); return true; } catch (e) { log("warn", "ws send failed", { error: String(e) }); }
+    try {
+      ws.send(JSON.stringify(obj));
+      return true;
+    } catch (e) {
+      log("warn", "ws send failed", { error: String(e) });
+    }
   }
   return false;
 }
@@ -817,26 +1110,67 @@ function sendWs(port, obj) {
 
 async function onWsMessage(ws, port, raw) {
   let m;
-  try { m = JSON.parse(raw); } catch { return; }
+  try {
+    m = JSON.parse(raw);
+  } catch {
+    return;
+  }
   if (!m || typeof m !== "object" || ws.__retired) return;
   if (m.type === "auth.challenge" && !ws.__authenticated) {
-    if (ws.__auth || m.protocol !== WSAuth.PROTOCOL || !WSAuth.validToken(m.nonce) || !bridgeToken) {
-      ws.close(); return;
+    if (
+      ws.__auth ||
+      m.protocol !== WSAuth.PROTOCOL ||
+      !WSAuth.validToken(m.nonce) ||
+      !bridgeToken
+    ) {
+      ws.close();
+      return;
     }
-    const auth = { serverNonce: m.nonce, clientNonce: WSAuth.createNonce(), token: bridgeToken };
+    const auth = {
+      serverNonce: m.nonce,
+      clientNonce: WSAuth.createNonce(),
+      token: bridgeToken,
+    };
     ws.__auth = auth;
     try {
-      const proof = await WSAuth.sign(auth.token, "extension", "client", auth.serverNonce, auth.clientNonce);
+      const proof = await WSAuth.sign(
+        auth.token,
+        "extension",
+        "client",
+        auth.serverNonce,
+        auth.clientNonce,
+      );
       if (ws.__retired) return;
-      wsSendTo(ws, { type: "auth.response", protocol: WSAuth.PROTOCOL, role: "extension", nonce: auth.clientNonce, proof, extId: chrome.runtime?.id });
-    } catch (_) { ws.close(); }
+      wsSendTo(ws, {
+        type: "auth.response",
+        protocol: WSAuth.PROTOCOL,
+        role: "extension",
+        nonce: auth.clientNonce,
+        proof,
+        extId: chrome.runtime?.id,
+      });
+    } catch (_) {
+      ws.close();
+    }
     return;
   }
   if (m.type === "auth.ok" && !ws.__authenticated) {
     const auth = ws.__auth;
-    if (!auth || m.protocol !== WSAuth.PROTOCOL ||
-        !await WSAuth.verify(auth.token, "extension", "server", auth.serverNonce, auth.clientNonce, m.proof) || ws.__retired) {
-      ws.close(); return;
+    if (
+      !auth ||
+      m.protocol !== WSAuth.PROTOCOL ||
+      !(await WSAuth.verify(
+        auth.token,
+        "extension",
+        "server",
+        auth.serverNonce,
+        auth.clientNonce,
+        m.proof,
+      )) ||
+      ws.__retired
+    ) {
+      ws.close();
+      return;
     }
     ws.__authenticated = true;
     ws.__auth = null;
@@ -844,29 +1178,73 @@ async function onWsMessage(ws, port, raw) {
     log("info", "agent ws authenticated", { port });
     return;
   }
-  if (!ws.__authenticated) { ws.close(); return; }
+  if (!ws.__authenticated) {
+    ws.close();
+    return;
+  }
   if (m.type === "cmd" || m.type === "agent.cmd") {
     const { id, cmd, args, clientId, deadlineAt, transientClient } = m;
-    if (typeof id !== "string" || typeof clientId !== "string" || !clientId ||
-        (deadlineAt != null && !Number.isFinite(deadlineAt))) {
-      wsSendTo(ws, { type: "agent.result", id, ok: false, error: "invalid command identity or deadline" });
+    if (
+      typeof id !== "string" ||
+      typeof clientId !== "string" ||
+      !clientId ||
+      (deadlineAt != null && !Number.isFinite(deadlineAt))
+    ) {
+      wsSendTo(ws, {
+        type: "agent.result",
+        id,
+        ok: false,
+        error: "invalid command identity or deadline",
+      });
       return;
     }
     ws.__requests ||= new Map();
     ws.__clients ||= new Map();
-    if (ws.__requests.has(id)) { wsSendTo(ws, { type: "agent.result", id, ok: false, error: "duplicate in-flight request id" }); return; }
+    if (ws.__requests.has(id)) {
+      wsSendTo(ws, {
+        type: "agent.result",
+        id,
+        ok: false,
+        error: "duplicate in-flight request id",
+      });
+      return;
+    }
     ws.__clients.set(clientId, transientClient !== false);
     const priorCleanup = ws.__disconnecting?.get(clientId);
-    const ctx = { ws, wsPort: port, clientId, deadlineAt, cancelled: false, started: false, authenticationRequired: true, completion: null };
+    const ctx = {
+      ws,
+      wsPort: port,
+      clientId,
+      deadlineAt,
+      cancelled: false,
+      started: false,
+      authenticationRequired: true,
+      completion: null,
+    };
     ws.__requests.set(id, ctx);
-    ctx.completion = Promise.resolve().then(async () => {
-      if (priorCleanup) await priorCleanup;
-      if (ws.__retired || !ws.__authenticated) throw new Error("command connection is no longer authenticated");
-      if (ctx.cancelled || (deadlineAt != null && Date.now() >= deadlineAt)) throw new Error("command cancelled or deadline expired before execution");
-      claimWsClient(ws, clientId);
-      return execAgentCmd(cmd, args, clientId, ctx);
-    }).then((result) => wsSendTo(ws, { type: "agent.result", id, ok: true, result }))
-      .catch((e) => wsSendTo(ws, { type: "agent.result", id, ok: false, error: String(e.message || e) }))
+    ctx.completion = Promise.resolve()
+      .then(async () => {
+        if (priorCleanup) await priorCleanup;
+        if (ws.__retired || !ws.__authenticated)
+          throw new Error("command connection is no longer authenticated");
+        if (ctx.cancelled || (deadlineAt != null && Date.now() >= deadlineAt))
+          throw new Error(
+            "command cancelled or deadline expired before execution",
+          );
+        claimWsClient(ws, clientId);
+        return execAgentCmd(cmd, args, clientId, ctx);
+      })
+      .then((result) =>
+        wsSendTo(ws, { type: "agent.result", id, ok: true, result }),
+      )
+      .catch((e) =>
+        wsSendTo(ws, {
+          type: "agent.result",
+          id,
+          ok: false,
+          error: String(e.message || e),
+        }),
+      )
       .finally(() => ws.__requests.delete(id));
     return ctx.completion;
   }
@@ -875,9 +1253,19 @@ async function onWsMessage(ws, port, raw) {
     if (ctx && !ctx.started) ctx.cancelled = true;
     return;
   }
-  if (m.type === "client.disconnect" && typeof m.clientId === "string" && ws.__clients?.has(m.clientId)) {
+  if (
+    m.type === "client.disconnect" &&
+    typeof m.clientId === "string" &&
+    ws.__clients?.has(m.clientId)
+  ) {
     await disconnectClient(ws, m.clientId, m.releaseLeases !== false);
-    if (m.id != null) wsSendTo(ws, { type: "agent.result", id: m.id, ok: true, result: { disconnected: true, clientId: m.clientId } });
+    if (m.id != null)
+      wsSendTo(ws, {
+        type: "agent.result",
+        id: m.id,
+        ok: true,
+        result: { disconnected: true, clientId: m.clientId },
+      });
     return;
   }
   if (m.type === "ping") wsSendTo(ws, { type: "pong", ts: m.ts });
@@ -893,17 +1281,29 @@ async function connectAgentWs() {
       if (agentWs.get(port)?.size) continue;
       if (Date.now() < (portCooldown.get(port) || 0)) continue;
       let ws;
-      try { ws = new WebSocket("ws://127.0.0.1:" + port); } catch (_) { continue; }
+      try {
+        ws = new WebSocket("ws://127.0.0.1:" + port);
+      } catch (_) {
+        continue;
+      }
       const set = new Set([ws]);
       agentWs.set(port, set);
       ws.__requests = new Map();
       ws.__clients = new Map();
       ws.__authenticated = false;
-      ws.__authTimer = setTimeout(() => { if (!ws.__authenticated) ws.close(); }, 5000);
+      ws.__authTimer = setTimeout(() => {
+        if (!ws.__authenticated) ws.close();
+      }, 5000);
       // 拨号看门狗：SYN_SENT 卡死（loopback 对死端口偶发不回 RST，T-32）时，
       // 10s 内没 open 就强制 close 走 onclose 冷却，而不是让死 socket 永久
       // 占住该端口（set.size>0 会跳过重拨）。
-      ws.__dialTimer = setTimeout(() => { if (!ws.__opened) { try { ws.close(); } catch (_) {} } }, 10000);
+      ws.__dialTimer = setTimeout(() => {
+        if (!ws.__opened) {
+          try {
+            ws.close();
+          } catch (_) {}
+        }
+      }, 10000);
       ws.onopen = () => {
         ws.__opened = true;
         clearTimeout(ws.__dialTimer);
@@ -917,10 +1317,21 @@ async function connectAgentWs() {
       ws.onmessage = (ev) => {
         // WebCrypto verification yields. Queue handshake frames so a command
         // immediately following auth.ok cannot race that verification.
-        ws.__incoming = (ws.__incoming || Promise.resolve()).then(async () => {
-          if (!ws.__authenticated) await onWsMessage(ws, port, ev.data);
-          else onWsMessage(ws, port, ev.data).catch(() => { try { ws.close(); } catch (_) {} });
-        }).catch(() => { try { ws.close(); } catch (_) {} });
+        ws.__incoming = (ws.__incoming || Promise.resolve())
+          .then(async () => {
+            if (!ws.__authenticated) await onWsMessage(ws, port, ev.data);
+            else
+              onWsMessage(ws, port, ev.data).catch(() => {
+                try {
+                  ws.close();
+                } catch (_) {}
+              });
+          })
+          .catch(() => {
+            try {
+              ws.close();
+            } catch (_) {}
+          });
       };
       ws.onclose = () => {
         clearTimeout(ws.__authTimer);
@@ -934,7 +1345,10 @@ async function connectAgentWs() {
         // 从未 open 的失败拨号进 15s 冷却（T-32）：把 bridge 真空期的空转拨号
         // 降一个量级。bridge 掉线（open 过再 close）不冷却，仍 5s 快速重连。
         if (!wasOpen) portCooldown.set(port, Date.now() + 15000);
-        for (const [clientId, transientClient] of [...ws.__clients]) disconnectClient(ws, clientId, transientClient).catch((e) => log("warn", "client cleanup failed", { error: String(e) }));
+        for (const [clientId, transientClient] of [...ws.__clients])
+          disconnectClient(ws, clientId, transientClient).catch((e) =>
+            log("warn", "client cleanup failed", { error: String(e) }),
+          );
         wsLog("port " + port + " CLOSED");
         scheduleWsRescan();
       };
@@ -942,7 +1356,11 @@ async function connectAgentWs() {
     }
     scheduleWsRescan();
   })();
-  try { return await connectingAgentWs; } finally { connectingAgentWs = null; }
+  try {
+    return await connectingAgentWs;
+  } finally {
+    connectingAgentWs = null;
+  }
 }
 
 // While no agent WS is open, keep probing every 5s (cheap: connect-refused is
@@ -962,7 +1380,8 @@ function scheduleWsRescan() {
 
 // ---------------- side panel <-> background messaging ----------------
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (typeof msg?.type !== "string" || !msg.type.startsWith("panel.")) return false;
+  if (typeof msg?.type !== "string" || !msg.type.startsWith("panel."))
+    return false;
   (async () => {
     switch (msg?.type) {
       case "panel.status": {
@@ -991,29 +1410,54 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // direct CDP call from the panel UI: { tabId, method, params }
         // Serialized on the tab so it never interleaves with an agent's CDP.
         const tabId = msg.tabId;
-        if (typeof tabId !== "number") { sendResponse({ ok: false, error: "panel.cdp: tabId must be a number" }); break; }
+        if (typeof tabId !== "number") {
+          sendResponse({
+            ok: false,
+            error: "panel.cdp: tabId must be a number",
+          });
+          break;
+        }
         acquireLease(PANEL_CLIENT, tabId);
         const cdpTimeout = msg.timeoutMs || 15000;
-        const result = await withTabLock(tabId, PANEL_CLIENT, async () => {
-          const s = await ensureAttached(tabId);
-          return cdpSend(
-            s.targetId ? { targetId: s.targetId } : { tabId },
-            msg.method,
-            msg.params || {},
-            cdpTimeout,
-          );
-        }, lockMsForCdp(cdpTimeout, msg.method));
+        const result = await withTabLock(
+          tabId,
+          PANEL_CLIENT,
+          async () => {
+            const s = await ensureAttached(tabId);
+            return cdpSend(
+              s.targetId ? { targetId: s.targetId } : { tabId },
+              msg.method,
+              msg.params || {},
+              cdpTimeout,
+            );
+          },
+          lockMsForCdp(cdpTimeout, msg.method),
+        );
         sendResponse({ ok: true, result });
         break;
       }
       case "panel.attach":
-        if (typeof msg.tabId !== "number") { sendResponse({ ok: false, error: "panel.attach: tabId must be a number" }); break; }
+        if (typeof msg.tabId !== "number") {
+          sendResponse({
+            ok: false,
+            error: "panel.attach: tabId must be a number",
+          });
+          break;
+        }
         acquireLease(PANEL_CLIENT, msg.tabId);
-        await withTabLock(msg.tabId, PANEL_CLIENT, () => ensureAttached(msg.tabId));
+        await withTabLock(msg.tabId, PANEL_CLIENT, () =>
+          ensureAttached(msg.tabId),
+        );
         sendResponse({ ok: true });
         break;
       case "panel.detach":
-        if (typeof msg.tabId !== "number") { sendResponse({ ok: false, error: "panel.detach: tabId must be a number" }); break; }
+        if (typeof msg.tabId !== "number") {
+          sendResponse({
+            ok: false,
+            error: "panel.detach: tabId must be a number",
+          });
+          break;
+        }
         await releaseLease(PANEL_CLIENT, msg.tabId);
         sendResponse({ ok: true });
         break;
@@ -1033,7 +1477,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({
       ok: true,
       status: "connected",
-      tabs: [...tabs.entries()].map(([id, s]) => ({ tabId: id, attached: s.attached })),
+      tabs: [...tabs.entries()].map(([id, s]) => ({
+        tabId: id,
+        attached: s.attached,
+      })),
     });
   }
 });
@@ -1056,7 +1503,11 @@ if (chrome.commands?.onCommand?.addListener) {
 //
 // 仅在真实浏览器 SW 里自动拨号：chrome.runtime.id 在 SW 中恒有值，
 // node 测试 mock 没有 —— 避免测试环境真的去连 127.0.0.1。
-const IS_BROWSER_SW = !!(typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id);
+const IS_BROWSER_SW = !!(
+  typeof chrome !== "undefined" &&
+  chrome.runtime &&
+  chrome.runtime.id
+);
 if (IS_BROWSER_SW) connectAgentWs();
 chrome.runtime.onInstalled?.addListener?.(() => {
   if (IS_BROWSER_SW) connectAgentWs(); // idempotent: no-ops if already connected
@@ -1070,7 +1521,8 @@ chrome.runtime.onStartup?.addListener?.(() => {
 if (chrome.alarms?.create) {
   chrome.alarms.create("wb-agent-ws-keepalive", { periodInMinutes: 0.5 });
   chrome.alarms.onAlarm?.addListener?.((alarm) => {
-    if (alarm?.name === "wb-agent-ws-keepalive" && IS_BROWSER_SW) connectAgentWs();
+    if (alarm?.name === "wb-agent-ws-keepalive" && IS_BROWSER_SW)
+      connectAgentWs();
   });
 }
 

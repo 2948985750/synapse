@@ -11,7 +11,9 @@ const root = path.resolve(__dirname, "..");
 const manifest = JSON.parse(
   fs.readFileSync(path.join(root, "extension", "manifest.json"), "utf8"),
 );
-const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+const pkg = JSON.parse(
+  fs.readFileSync(path.join(root, "package.json"), "utf8"),
+);
 
 if (!manifest.version || !pkg.version) {
   console.error("版本号缺失：manifest.version 或 package.json version 为空");
