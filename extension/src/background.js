@@ -14,24 +14,15 @@
 //   4. Hidden-tab render — Emulation.setDeviceMetricsOverride on attached
 //                      tabs so lazy content / offscreen tabs still paint.
 
-// MV3 service worker: use importScripts (not ES modules) for tablock.
-importScripts("./tablock.js", "./ws-auth.js");
-
-const CDP_VERSION = "1.3";
-
-// cdpSend forwards ANY CDP domain.method the brain requests, straight to the
-// attached tab. No domain allow-list, no method block-list — the extension is
-// a full CDP passthrough. Only a structural guard remains: the method must be
-// a non-empty string so a garbage payload can't reach chrome.debugger with an
-// undefined shape.
-function cdpMethodAllowed(method) {
-  if (typeof method !== "string" || !method) {
-    throw new Error(
-      "cdpSend: method must be a non-empty string like 'Domain.method'",
-    );
-  }
-  return true;
-}
+// MV3 service worker: use importScripts (not ES modules).
+// lib/ 下是抽出来的可复用层：动作空间表达式、CDP 传输、capture 会话。
+importScripts(
+  "./tablock.js",
+  "./ws-auth.js",
+  "./lib/page-actions.js",
+  "./lib/cdp-transport.js",
+  "./lib/capture-store.js",
+);
 
 // ---------------- state ----------------
 /** tabId -> { attached, sessionId, turn, targetId } */
@@ -39,68 +30,21 @@ const tabs = new Map();
 /** targetId -> tabId (reverse index for debugger event routing) */
 const targetByTab = new Map();
 // ---------------- capture sessions（CDP 事件 → agent 转发） ----------------
-// 一个 capture session 让 agent（某条 WS 连接）订阅某 tab 上若干 CDP 域的事件：
-//   capture.start  → 对目标 Network.enable 等，chrome.debugger.onEvent 匹配到的
-//                    事件以 {type:"event.push"} 定向推给【发起捕获的那条 socket】；
-//   capture.stop   → 停止转发 + 尽力 Domain.disable。
-// 用途：agent 在页面首屏加载/重新触发期间收集 Network.requestWillBeSent /
-// responseReceived / loadingFinished，再逐条 Network.getResponseBody 拿响应体
-// —— 这是比 DOM 高效得多的数据源（结构化、含站点自签名 API 响应）。
-// Capture entries are independent tab leases; stopping one must not release a
-// client's explicit/CDP lease or disable a domain used by another capture.
-const captureSessions = new Map();
-let captureSequence = 0;
-function captureUsesDomain(tabId, domain, exceptId) {
-  return [...captureSessions.values()].some(
-    (s) =>
-      s.captureId !== exceptId &&
-      s.active &&
-      s.tabId === tabId &&
-      s.domains.includes(domain),
-  );
-}
-
-async function stopCapture(captureId, ctx) {
-  const s = captureSessions.get(captureId);
-  if (!s) return { stopped: false, reason: "no such capture" };
-  if (s.stopping) return s.stopping;
-  s.active = false;
-  if (s.timer) clearTimeout(s.timer);
-  s.stopping = withTabLock(
-    s.tabId,
-    s.clientId,
-    async () => {
-      try {
-        // Cleanup must never reattach a closed or explicitly detached target.
-        const st = tabs.get(s.tabId);
-        if (st?.attached) {
-          const target = st.targetId
-            ? { targetId: st.targetId }
-            : { tabId: s.tabId };
-          for (const d of s.domains) {
-            if (captureUsesDomain(s.tabId, d, captureId)) continue;
-            try {
-              await cdpSend(target, d + ".disable", {}, 5000);
-            } catch (_) {}
-          }
-        }
-      } finally {
-        captureSessions.delete(captureId);
-        if (!hasTabLease(s.tabId)) await doDetach(s.tabId);
-      }
-      log("info", "capture stopped", { captureId, tabId: s.tabId });
-      return { stopped: true, captureId, tabId: s.tabId };
-    },
-    60000,
-    ctx,
-  );
-  try {
-    return await s.stopping;
-  } catch (e) {
-    s.stopping = null;
-    throw e;
-  }
-}
+// 实现在 lib/capture-store.js：会话注册表、domain 复用判断、定时停止、事件定向推送。
+// 这里只做依赖注入（它需要 tab 锁 / attach 状态 / 摘除后的簿记能力）。
+const capture = createCaptureStore({
+  log,
+  // 惰性转发：cdpSend 在下面的 CDP 段才初始化，而 capture 在这里就要建好。
+  cdpSend: (...args) => cdpSend(...args),
+  withTabLock,
+  ensureAttached,
+  doDetach,
+  hasTabLease,
+  beginCommand,
+  getAttachedState: (tabId) => tabs.get(tabId),
+});
+const captureSessions = capture.sessions;
+const stopCapture = capture.stop;
 // Concurrency model (shared gate, exclusive tab, serialized commands):
 //  - Multiple agent conversations may use the extension at once.
 //  - CDP ops on one tab are serialized FIFO by tabLock (tablock.js).
@@ -158,91 +102,18 @@ function getTab(tabId) {
 }
 
 // ---------------- CDP bridge ----------------
-async function cdpSendOnce(target, method, params, timeoutMs) {
-  cdpMethodAllowed(method);
-  const t =
-    typeof target?.targetId === "string"
-      ? { targetId: target.targetId }
-      : target; // { tabId } form
-  // Race the CDP call against a real timer. A hanging sendCommand must not
-  // wedge the tab lock forever (the caller holds it for the whole cdpSend).
-  let timerId;
-  const timeout = new Promise((_, rej) => {
-    timerId = setTimeout(
-      () => rej(new Error(`CDP timeout: ${method}`)),
-      timeoutMs,
-    );
-  });
-  try {
-    return await Promise.race([
-      chrome.debugger.sendCommand(t, method, params || {}),
-      timeout,
-    ]);
-  } finally {
-    clearTimeout(timerId);
-  }
-}
-
-// 原生弹窗（alert/confirm/prompt）会卡住该 tab 的一切 evaluate（T-30）。实测
-// 弹窗出现后 ~5s 浏览器侧自愈，所以 evaluate 超时按"疑似弹窗"处理：等 6s 重试
-// 一次。调用方的锁超时须覆盖 最坏 2×timeoutMs+6s（用 lockMsForCdp 算）。
-const DIALOG_RETRY_WAIT_MS = 6000;
-async function cdpSend(target, method, params, timeoutMs = 15000) {
-  try {
-    return await cdpSendOnce(target, method, params, timeoutMs);
-  } catch (e) {
-    if (
-      method === "Runtime.evaluate" &&
-      /CDP timeout/.test(String((e && e.message) || e))
-    ) {
-      log(
-        "warn",
-        "Runtime.evaluate timeout — suspected modal dialog, retrying once",
-        {
-          waitMs: DIALOG_RETRY_WAIT_MS,
-        },
-      );
-      await new Promise((r) => setTimeout(r, DIALOG_RETRY_WAIT_MS));
-      try {
-        return await cdpSendOnce(target, method, params, timeoutMs);
-      } catch (e2) {
-        throw new Error(
-          "Runtime.evaluate 超时两次（疑似页面原生弹窗卡住该标签）——close 该 tab 或人工处理弹窗后重试：" +
-            String((e2 && e2.message) || e2),
-        );
-      }
-    }
-    throw e;
-  }
-}
-
-// cdp 命令的锁超时：锁必须活得比 CDP 调用久；Runtime.evaluate 有弹窗重试，
-// 最坏 2×timeoutMs+6s，其余 1×timeoutMs+5s。
-function lockMsForCdp(cdpTimeoutMs, method) {
-  return method === "Runtime.evaluate"
-    ? 2 * cdpTimeoutMs + DIALOG_RETRY_WAIT_MS + 5000
-    : cdpTimeoutMs + 5000;
-}
-
-// 轮询标签加载完成（T-30：open/navigate 不等 load，慢站立刻 run 拿到空 DOM）。
-// status=complete 即返回 loaded:true；waitMs 到点放行（loaded:false）；标签被
-// 关也放行（gone:true）。waitMs<=0 跳过轮询。
-async function waitTabComplete(tabId, waitMs) {
-  if (!Number.isFinite(waitMs) || waitMs <= 0)
-    return { loaded: false, waitMs: 0 };
-  const t0 = Date.now();
-  for (;;) {
-    try {
-      const t = await chrome.tabs.get(tabId);
-      if (t.status === "complete")
-        return { loaded: true, waitMs: Date.now() - t0 };
-    } catch (_) {
-      return { loaded: false, waitMs: Date.now() - t0, gone: true };
-    }
-    if (Date.now() - t0 >= waitMs) return { loaded: false, waitMs };
-    await new Promise((r) => setTimeout(r, 300));
-  }
-}
+// 实现在 lib/cdp-transport.js：sendCommand 硬超时、Runtime.evaluate 的弹窗重试、
+// 锁预算换算、等标签加载完成。这里只注入 chrome 与 log。
+const cdp = createCdpTransport({ chromeApi: chrome, log });
+// 模块导出的是 send/sendOnce（通用命名），这里沿用扩展内部的老名字，
+// 调用点（doAttach / execAgentCmd）一行都不用改。
+const {
+  CDP_VERSION,
+  send: cdpSend,
+  sendOnce: cdpSendOnce,
+  lockMsForCdp,
+  waitTabComplete,
+} = cdp;
 
 // Low-level attach. MUST be called with the tab lock held (see withTabLock),
 // otherwise two conversations can race `chrome.debugger.attach` on one tab.
@@ -416,28 +287,8 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       );
     }
   }
-  // 转发给订阅了该 tab CDP 事件的 agent（capture session）。
-  if (tabId != null) {
-    for (const s of captureSessions.values()) {
-      if (!s.active || s.tabId !== tabId) continue;
-      if (!s.domains.some((d) => method.indexOf(d + ".") === 0)) continue;
-      // 定向推给发起捕获的那条 socket（该 socket 断开时 session 已被清理，不会漏推）
-      if (s.ws && s.ws.readyState === 1) {
-        try {
-          s.ws.send(
-            JSON.stringify({
-              type: "event.push",
-              captureId: s.captureId,
-              clientId: s.clientId,
-              tabId,
-              method,
-              params,
-            }),
-          );
-        } catch (_) {}
-      }
-    }
-  }
+  // 转发给订阅了该 tab CDP 事件的 agent（capture session，见 lib/capture-store.js）。
+  capture.pushEvent(tabId, method, params);
 });
 
 // ---------------- turn leases (per-client, concurrency-safe) ----------------
@@ -527,76 +378,9 @@ async function withTabLock(tabId, clientId, fn, lockTimeoutMs = 60000, ctx) {
 // 回复路由由调用方负责（WS 用 socket）；本函数只做纯工作，
 // 复用同一套 CDP 逻辑、tab 锁与 client 租约。
 // ---------------- 索引化动作空间（snapshot / click-el / type-el） ----------------
-// 引入自 browser-use/jev-ultrafast 的思想：agent 不手写选择器 JS，而是从
-// 快照索引里选编号 + 标签；执行前重新解析校验（stale 则明示，不静默点空）。
-// 动作空间是白名单（click/type），不是全 JS 通道。
-// 页内候选枚举规则（snapshot 与 resolve 必须完全一致，否则索引失配）：
-const EL_CANDIDATE_SEL =
-  'input,button,select,textarea,a,[role="button"],[role="tab"],[role="link"],[role="menuitem"],[role="checkbox"],[role="radio"],[role="switch"],[data-testid]';
-
-// 收集器（snapshot 与 act 同源注入同一份源码）：document 级枚举 + open
-// shadowRoot 递归。T-30 实证不递归时 shreddit 类 shadow 站整体不可见。
-const EL_COLLECTOR_SRC =
-  "function labelOf(e){return (e.getAttribute('aria-label')||e.getAttribute('placeholder')||e.getAttribute('name')) || String((e.innerText||e.textContent||'').trim()).slice(0,24);}" +
-  "function __elNodes(){" +
-  "var SEL=" +
-  JSON.stringify(EL_CANDIDATE_SEL) +
-  ";" +
-  "var out=[];" +
-  "function collect(root){var els=root.querySelectorAll(SEL);for(var k=0;k<els.length;k++)out.push(els[k]);" +
-  "var hosts=root.querySelectorAll('*');for(var h=0;h<hosts.length;h++){var sr=null;try{sr=hosts[h].shadowRoot;}catch(_){}" +
-  "if(sr)collect(sr);}}" +
-  "collect(document);" +
-  "return [].filter.call(out,function(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0&&!e.disabled;});" +
-  "}";
-
-function snapshotExpr(max) {
-  const m = Number(max) > 0 ? Number(max) : 50;
-  return (
-    "(function(){" +
-    EL_COLLECTOR_SRC +
-    "var nodes=__elNodes();" +
-    "var items=nodes.slice(0," +
-    m +
-    ").map(function(e,i){return {i:i,tag:e.tagName.toLowerCase(),role:e.getAttribute('role')||'',label:labelOf(e)};});" +
-    "return JSON.stringify({url:location.href,ts:Date.now(),total:nodes.length,count:items.length,items:items});})()"
-  );
-}
-
-// act: "click" | "type"；typeText 以 "__CLEAR__" 前缀表示先清空；
-// el = 快照条目 {i,tag,role,label}。解析校验：索引在界内 + label 未漂移。
-// 动作执行期间临时接管 alert/confirm/prompt（T-30：Edge 的 chrome.debugger
-// 不派发 javascriptDialogOpening，弹窗会把 evaluate 卡到超时且
-// handleJavaScriptDialog 报 "No dialog is showing" 解不掉）。同步包裹、
-// finally 恢复原生函数，页面事后观察不到覆写。
-const ACT_QUIET_DIALOGS_SRC =
-  "function withQuietDialogs(fn){var w=typeof window==='undefined'?null:window;if(!w||!w.alert)return fn();" +
-  "var oa=w.alert,oc=w.confirm,op=w.prompt;" +
-  "try{w.alert=function(){};w.confirm=function(){return true;};w.prompt=function(d){return d==null?'':d;};}catch(_){}" +
-  "try{return fn();}finally{try{w.alert=oa;w.confirm=oc;w.prompt=op;}catch(_){}}}";
-
-function actExpr(el, act, typeText) {
-  return (
-    "(function(el,act,txt){" +
-    EL_COLLECTOR_SRC +
-    ACT_QUIET_DIALOGS_SRC +
-    "var nodes=__elNodes();" +
-    "if(!(el.i>=0&&el.i<nodes.length)) return JSON.stringify({found:false,reason:'索引越界：页面已变化，请重新 snapshot'});" +
-    "var target=nodes[el.i],label=labelOf(target);" +
-    "if(el.label&&String(el.label).length&&label!==String(el.label))" +
-    " return JSON.stringify({found:false,reason:'label 漂移：期望 '+JSON.stringify(el.label)+' 实际 '+JSON.stringify(label)+'，请重新 snapshot'});" +
-    "if(act==='click'){withQuietDialogs(function(){target.click();});return JSON.stringify({found:true,clicked:label,rect:[Math.round(target.getBoundingClientRect().x),Math.round(target.getBoundingClientRect().y)]});}" +
-    "if(act==='type'){var clear=typeof txt==='string'&&txt.indexOf('__CLEAR__')===0;if(clear){txt=String(txt).slice(9);try{target.value='';}catch(_){}}var proto=target.tagName==='TEXTAREA'?window.HTMLTextAreaElement.prototype:window.HTMLInputElement.prototype;var d=Object.getOwnPropertyDescriptor(proto,'value');if(d&&d.set){d.set.call(target,txt);}else{target.value=txt;}withQuietDialogs(function(){target.dispatchEvent(new Event('input',{bubbles:true}));target.dispatchEvent(new Event('change',{bubbles:true}));});return JSON.stringify({found:true,typed:target.value});}" +
-    "return JSON.stringify({found:false,reason:'未知动作 '+JSON.stringify(act)});})" +
-    "(" +
-    JSON.stringify(el) +
-    "," +
-    JSON.stringify(act) +
-    "," +
-    JSON.stringify(typeText == null ? "" : typeText) +
-    ")"
-  );
-}
+// 表达式生成器在 lib/page-actions.js（纯字符串，不碰 chrome/CDP，可单独复用）：
+//   snapshotExpr(max)  /  actExpr(el, act, text)
+// 二者共用同一份候选枚举源码，所以快照索引与点击目标不会错位。
 
 async function execAgentCmd(cmd, args, clientId, ctx) {
   switch (cmd) {
@@ -609,110 +393,11 @@ async function execAgentCmd(cmd, args, clientId, ctx) {
         active: t.active,
       }));
     }
-    case "capture.start": {
-      const { tabId, domains, durationMs } = args || {};
-      if (!Number.isInteger(tabId))
-        throw new Error("capture.start: need integer tabId");
-      const doms = [
-        ...new Set(
-          Array.isArray(domains) && domains.length ? domains : ["Network"],
-        ),
-      ];
-      if (!doms.every((d) => typeof d === "string" && /^[A-Za-z]+$/.test(d))) {
-        throw new Error("capture.start: invalid domain");
-      }
-      const dur =
-        Number.isFinite(durationMs) && durationMs > 0
-          ? Math.min(durationMs, 2147483647)
-          : 30000;
-      if (ctx?.ws == null) throw new Error("capture.start: WS channel only");
-      return withTabLock(
-        tabId,
-        clientId,
-        async () => {
-          for (const other of captureSessions.values()) {
-            if (
-              other.active &&
-              other.clientId === clientId &&
-              other.tabId === tabId
-            ) {
-              throw new Error(
-                "capture.start: a capture session is already active for this tab+client (stop it first)",
-              );
-            }
-          }
-          const enabled = [];
-          const s = await ensureAttached(tabId);
-          const target = s.targetId ? { targetId: s.targetId } : { tabId };
-          try {
-            for (const d of doms) {
-              if (captureUsesDomain(tabId, d)) continue;
-              await cdpSend(target, d + ".enable", {}, 15000);
-              enabled.push(d);
-            }
-            const captureId =
-              "cap-" + Date.now().toString(36) + "-" + ++captureSequence;
-            const sess = {
-              captureId,
-              clientId,
-              tabId,
-              domains: doms,
-              ws: ctx.ws,
-              wsPort: ctx.wsPort,
-              active: true,
-              timer: null,
-            };
-            sess.timer = setTimeout(
-              () =>
-                stopCapture(captureId).catch((e) =>
-                  log("warn", "capture cleanup failed", { error: String(e) }),
-                ),
-              dur,
-            );
-            captureSessions.set(captureId, sess);
-            log("info", "capture started", {
-              captureId,
-              tabId,
-              domains: doms,
-              durationMs: dur,
-            });
-            return {
-              started: true,
-              captureId,
-              tabId,
-              domains: doms,
-              durationMs: dur,
-            };
-          } catch (e) {
-            for (const d of enabled) {
-              if (!captureUsesDomain(tabId, d))
-                await cdpSend(target, d + ".disable", {}, 5000).catch(() => {});
-            }
-            if (!hasTabLease(tabId)) await doDetach(tabId);
-            throw e;
-          }
-        },
-        60000,
-        ctx,
-      );
-    }
-    case "capture.stop": {
-      const { tabId, captureId } = args || {};
-      const sess = captureId
-        ? captureSessions.get(captureId)
-        : [...captureSessions.values()].find(
-            (s) =>
-              s.active &&
-              s.clientId === clientId &&
-              s.tabId === tabId &&
-              (!ctx?.ws || s.ws === ctx.ws),
-          );
-      if (!sess) return { stopped: false, reason: "no active capture session" };
-      if (sess.clientId !== clientId || (ctx?.ws && sess.ws !== ctx.ws))
-        throw new Error("capture.stop: session belongs to another client");
-      beginCommand(ctx);
-      return stopCapture(sess.captureId);
-    }
+    case "capture.start":
+      // 实现在 lib/capture-store.js：domain 复用判断 / 定时停止 / 失败回滚都在那里。
+      return capture.start(args, clientId, ctx);
+    case "capture.stop":
+      return capture.stopByArgs(args, clientId, ctx);
     // 索引化动作空间：snapshot 枚举可交互控件；click-el/type-el 按快照条目
     // 定位（执行前重解析校验，stale 则报不执行）。
     case "snapshot": {

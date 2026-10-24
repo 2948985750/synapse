@@ -8,7 +8,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node scripts/verify-version.js && node extension/src/test-tablock.js && node extension/src/test-background.js",
+    "test": "node scripts/verify-version.js && node extension/src/test-tablock.js && node extension/src/lib/test-lib.js && node extension/src/test-background.js",
     "test:ws-auth": "node extension/src/test-ws-auth.js",
     "build:store": "node build/build-store.js",
     "verify:version": "node scripts/verify-version.js",
