@@ -13,6 +13,7 @@
     "build:store": "node build/build-store.js",
     "verify:version": "node scripts/verify-version.js",
     "release:check": "node scripts/verify-version.js && node build/build-store.js",
-    "gen:icons": "node build/gen-icons.js"
+    "gen:icons": "node build/gen-icons.js",
+    "test:e2e": "node scripts/e2e-smoke.js"
   }
 }

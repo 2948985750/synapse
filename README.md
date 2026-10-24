@@ -82,9 +82,19 @@ agent 仓库里是同值），连接时做双向 HMAC 挑战/应答。没有配�
 ## 测试
 
 ```powershell
-npm test           # tablock(8) + background(27)，全部浏览器无关（mock chrome.debugger）
+npm test               # tablock(8) + lib(17) + background(36)，浏览器无关（mock chrome.debugger）
 npm run test:ws-auth   # 浏览器侧与 node 侧的 ws-auth 互通/重放/伪造测试
+npm run test:e2e       # 真浏览器 E2E：临时 profile + 真扩展 + 真 CDP，10 项断言，约 10s
 ```
+
+`npm run test:e2e` 会：启动一个**临时 profile** 的 Edge（不碰你正在用的浏览器/登录态）→
+加载 `extension/` → 起一条测试桥 → 跑 `status → open → snapshot → click → navigate →
+capture → diag → close` → 无论成败都杀掉浏览器进程树、桥和临时目录。
+
+它专抓单测抓不到的问题：`importScripts` 漏文件、商店包漏打 `lib/*.js`、manifest 权限删过头、
+service worker 起不来、真实 HMAC 握手失败。可用 `--keep` 保留现场、`--browser <path>` 指定浏览器。
+
+> 本机同时开着另一个浏览器时，两条扩展会抢同一批端口；脚本检测到"桥上是别人的标签"会自动换端口重试（最多 3 次）。
 
 ## 相关仓库
 
