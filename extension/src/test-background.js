@@ -216,6 +216,23 @@ async function ok(name, fn) {
   console.log("  ok - " + name);
 }
 
+// Dispatch a panel.* message to the registered listeners and resolve with the
+// first response. Resolves null when no listener owns the message.
+function callPanel(mock, msg) {
+  return new Promise((resolve) => {
+    let done = false;
+    const respond = (r) => {
+      if (done) return;
+      done = true;
+      resolve(r);
+    };
+    for (const listener of mock.chrome.runtime.onMessage.listeners) {
+      const handled = listener(msg, {}, respond);
+      if (handled === true) return;
+    }
+    if (!done) resolve(null);
+  });
+}
 async function main() {
   console.log("background (real module, mocked chrome.debugger)");
   const dbg = makeDebugger();
@@ -731,6 +748,90 @@ async function main() {
     assert.strictEqual(clicks, 1);
   });
 
+
+  // L. Panel RPC (side panel <-> background). These messages used to throw
+  //    ReferenceError because PANEL_CLIENT had been deleted by accident; the
+  //    suite only covered agent commands, so nothing caught it.
+  await ok("panel.status reports the bridge state", async () => {
+    const r = await callPanel(mock, { type: "panel.status" });
+    assert.strictEqual(r.ok, true);
+    assert.ok(Array.isArray(r.wsAgents));
+    assert.strictEqual(typeof r.wsConnected, "boolean");
+  });
+
+  await ok("panel.cdp runs a CDP call under the tab lock", async () => {
+    const r = await callPanel(mock, {
+      type: "panel.cdp",
+      tabId: 500,
+      method: "__fast",
+      params: {},
+    });
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.result.method, "__fast");
+  });
+
+  await ok("panel.cdp rejects a non-numeric tabId", async () => {
+    const r = await callPanel(mock, { type: "panel.cdp", tabId: "500", method: "__fast" });
+    assert.strictEqual(r.ok, false);
+    assert.match(r.error, /tabId must be a number/);
+  });
+
+  await ok("panel.attach then panel.detach succeed", async () => {
+    const a = await callPanel(mock, { type: "panel.attach", tabId: 501 });
+    const d = await callPanel(mock, { type: "panel.detach", tabId: 501 });
+    assert.strictEqual(a.ok, true);
+    assert.strictEqual(d.ok, true);
+  });
+
+  await ok("non-panel messages are left to other listeners", async () => {
+    const r = await callPanel(mock, { type: "agent.cmd" });
+    assert.strictEqual(r, null);
+  });
+
+  // M. WS command envelope validation: frames come from any local process,
+  //    so the bridge must reject a malformed envelope before dispatching.
+  const mkWsSock = () => {
+    const frames = [];
+    return {
+      readyState: global.WebSocket.OPEN,
+      __authenticated: true,
+      __clients: new Map(),
+      __requests: new Map(),
+      closed: false,
+      frames,
+      send(raw) { frames.push(JSON.parse(raw)); },
+      close() { this.closed = true; },
+    };
+  };
+
+  await ok("ws: an empty cmd name is rejected before dispatch", async () => {
+    const sock = mkWsSock();
+    await handle.onWsMessage(
+      sock,
+      9995,
+      JSON.stringify({ type: "cmd", id: "v1", clientId: "c1", cmd: "", args: {} }),
+    );
+    assert.strictEqual(sock.frames.length, 1);
+    assert.match(sock.frames[0].error, /cmd must be a non-empty string/);
+  });
+
+  await ok("ws: array args are rejected", async () => {
+    const sock = mkWsSock();
+    await handle.onWsMessage(
+      sock,
+      9995,
+      JSON.stringify({ type: "cmd", id: "v2", clientId: "c1", cmd: "tabs", args: [] }),
+    );
+    assert.strictEqual(sock.frames.length, 1);
+    assert.match(sock.frames[0].error, /args must be an object/);
+  });
+
+  await ok("ws: an oversized frame closes the socket without a reply", async () => {
+    const sock = mkWsSock();
+    await handle.onWsMessage(sock, 9995, "x".repeat((1 << 20) + 1));
+    assert.strictEqual(sock.closed, true);
+    assert.strictEqual(sock.frames.length, 0);
+  });
   console.log("\nALL-BACKGROUND-OK (" + passed + " cases)");
   process.exit(0);
 }
