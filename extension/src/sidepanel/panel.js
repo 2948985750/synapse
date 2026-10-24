@@ -1,8 +1,10 @@
 "use strict";
-// 侧面板（精简版）：选标签 / 单次 CDP。
-// 砍掉了原来的：连接大脑按钮、标签列表调试输出、诊断按钮、日志区块、手动 附加/分离 按钮。
-// 连接状态显示已鉴权的 WS 通道；首次使用在面板保存配对码。
-// "运行"时自动 attach -> 跑 CDP -> 自动 detach（幂等，后台 lease 保证）。
+// Side panel (minimal): pick a tab, run one CDP call.
+// Removed from the old panel: brain-connect button, tab-list debug output,
+// diagnostics button, log block and manual attach/detach buttons.
+// Status reflects the authenticated WS bridge; no pairing code is needed.
+// "Run" attaches, executes the CDP call, then detaches (idempotent: the
+// background owns the leases).
 
 const $ = (id) => document.getElementById(id);
 
@@ -12,15 +14,12 @@ function setState(cls, label) {
   el.textContent = label;
 }
 
-function escapeHtml(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
 
-// Only authenticated WS connections count as connected.
+// Only an authenticated WS bridge counts as connected.
 async function refreshStatus() {
   try {
     const r = await chrome.runtime.sendMessage({ type: "panel.status" });
-    if (!r?.ok) throw new Error(r?.error || "状态查询失败");
+    if (!r?.ok) throw new Error(r?.error || "status query failed");
     setState(r.wsConnected ? "ok" : "", r.wsConnected ? "已连接" : "等待本机工具");
   } catch (_) { setState("", "状态不可用"); }
 }
@@ -28,7 +27,7 @@ refreshStatus();
 const statusTimer = setInterval(refreshStatus, 3000);
 window.addEventListener("unload", () => clearInterval(statusTimer));
 
-// 标签下拉：自动拉一次，供 CDP 调用选目标 tab。
+// Tab dropdown: loaded once so a CDP call has a target tab.
 async function refreshTabs() {
   const tabs = await chrome.tabs.query({});
   const sel = $("in-tab");
@@ -45,7 +44,7 @@ async function refreshTabs() {
 }
 refreshTabs().catch(() => setState("", "标签读取失败"));
 
-// 单次 CDP：自动 attach -> 运行 -> detach。
+// One CDP call: attach -> run -> detach.
 $("btn-cdp").addEventListener("click", async () => {
   const tabId = Number($("in-tab").value);
   const method = $("in-method").value.trim();

@@ -11,12 +11,8 @@
     "debugger",
     "sidePanel",
     "tabs",
-    "tabGroups",
     "storage",
     "alarms"
-  ],
-  "host_permissions": [
-    "<all_urls>"
   ],
   "content_scripts": [
     {
