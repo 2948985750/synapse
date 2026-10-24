@@ -31,7 +31,6 @@ function createCommandExecutor(deps = {}) {
   const lockMsForCdp = deps.lockMsForCdp;
   const log = deps.log;
   const lastDialogs = deps.lastDialogs;
-  const logBuf = deps.logBuf;
   const clientLeases = deps.clientLeases;
   const agentWsPortsUp = deps.agentWsPortsUp;
 

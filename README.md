@@ -22,7 +22,7 @@ agent 侧（synapse-skill 仓库的 agent/）
 | 路径 | 内容 |
 |---|---|
 | `extension/manifest.json` | MV3 清单（名称、权限、service worker 入口） |
-| `extension/src/background.js` | 接线层（285 行）：装配下面这些模块、内容脚本桥、生命周期监听 |
+| `extension/src/background.js` | 接线层（约 250 行）：装配下面这些模块、内容脚本桥、生命周期监听；**不含业务状态** |
 | `extension/src/tablock.js` | 同 tab 串行化（FIFO + 超时） |
 | `extension/src/lib/page-actions.js` | 页内动作空间表达式（snapshot 枚举 / click / type），纯字符串、不碰 `chrome.*` |
 | `extension/src/lib/cdp-transport.js` | CDP 传输层：`sendCommand` 硬超时、`Runtime.evaluate` 弹窗重试、锁预算、等加载完成 |
@@ -32,6 +32,7 @@ agent 侧（synapse-skill 仓库的 agent/）
 | `extension/src/lib/commands.js` | 命令执行器：`tabs`/`open`/`snapshot`/`click-el`/`capture.*`/`cdp`/`run` 等全部命令（依赖注入） |
 | `extension/src/lib/ws-bridge.js` | agent WS 桥：端口探测、HMAC 握手、请求路由、拨号冷却、ping（时长为命名常量） |
 | `extension/src/lib/panel-rpc.js` | 侧边栏 RPC：面板以固定 client id 租 tab，和 agent 共用同一把 tab 锁 |
+| `extension/src/lib/diag.js` | 诊断：日志环形缓冲、最近弹窗快照、弹窗自动应答（`Page.javascriptDialogOpening`） |
 | `extension/src/ws-auth.js` | 浏览器侧 HMAC 挑战/证明（协议 `wb-cdp-ws/2`） |
 | `extension/src/content.js` | 页内辅助（`isTrusted` 事件、shadow DOM 穿透） |
 | `extension/src/sidepanel/` | 侧边栏 UI（标签、诊断、CDP 调用） |

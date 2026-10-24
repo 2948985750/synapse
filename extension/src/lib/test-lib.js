@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 "use strict";
-// Standalone tests for the three lib modules: no background.js, just mocks.
+// Standalone tests for the lib modules: no background.js, just mocks.
 //   node extension/src/lib/test-lib.js
 const assert = require("assert");
 const vm = require("vm");
@@ -9,6 +9,7 @@ const path = require("path");
 const { snapshotExpr, actExpr } = require("./page-actions.js");
 const { createCdpTransport } = require("./cdp-transport.js");
 const { createCaptureStore } = require("./capture-store.js");
+const { createDiag } = require("./diag.js");
 
 let passed = 0;
 async function ok(name, fn) {
@@ -213,6 +214,57 @@ async function main() {
     assert.strictEqual(sent.length, 1, "nothing is pushed once the socket closed");
   });
 
+
+  // ---------------- diag ----------------
+  await ok("diag keeps only the newest log entries", () => {
+    const d = createDiag({ logLimit: 3 });
+    for (let i = 0; i < 5; i++) d.log("info", "m" + i);
+    assert.deepStrictEqual(d.entries.map((e) => e.msg), ["m2", "m3", "m4"]);
+  });
+
+  await ok("diag caps dialog snapshots and keeps the newest tab", () => {
+    const d = createDiag({ dialogLimit: 2 });
+    d.noteDialog(1, { type: "alert", message: "a" });
+    d.noteDialog(2, { type: "confirm", message: "b" });
+    d.noteDialog(3, { type: "prompt", message: "c" });
+    assert.deepStrictEqual([...d.dialogs.keys()], [2, 3]);
+    assert.strictEqual(d.snapshot().dialogs.length, 2);
+  });
+
+  await ok("diag auto-accepts a page dialog and records it", async () => {
+    const calls = [];
+    const d = createDiag({
+      sendCommand: async (target, method, params, timeoutMs) => {
+        calls.push({ target, method, params, timeoutMs });
+      },
+    });
+    const handled = d.onCdpEvent({
+      source: { tabId: 7 },
+      tabId: 7,
+      method: "Page.javascriptDialogOpening",
+      params: { type: "alert", message: "hi", defaultPrompt: "x" },
+    });
+    assert.strictEqual(handled, true);
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0].method, "Page.handleJavaScriptDialog");
+    assert.strictEqual(calls[0].params.accept, true);
+    assert.strictEqual(calls[0].params.promptText, "x");
+    assert.strictEqual(d.dialogs.get(7).message, "hi");
+  });
+
+  await ok("diag ignores non-dialog events", () => {
+    const calls = [];
+    const d = createDiag({ sendCommand: async (...a) => calls.push(a) });
+    const handled = d.onCdpEvent({
+      source: { tabId: 7 },
+      tabId: 7,
+      method: "Network.loadingFinished",
+      params: {},
+    });
+    assert.strictEqual(handled, false);
+    assert.strictEqual(calls.length, 0);
+    assert.strictEqual(d.dialogs.size, 0);
+  });
   console.log("ALL-LIB-OK (" + passed + " cases)");
 }
 

@@ -30,17 +30,17 @@ importScripts(
   "./lib/commands.js",
   "./lib/ws-bridge.js",
   "./lib/panel-rpc.js",
+  "./lib/diag.js",
 );
 
-// ---------------- logging ----------------
-const logBuf = [];
-/** tabId -> last native dialog snapshot (Page.javascriptDialogOpening; diag) */
-const lastDialogs = new Map();
-
-function log(level, msg, extra) {
-  logBuf.push({ t: Date.now(), level, msg, extra });
-  if (logBuf.length > 200) logBuf.shift();
-}
+// ---------------- diagnostics ----------------
+// Implemented in lib/diag.js: the log ring, the last native-dialog snapshots
+// and the auto-accept reaction (a dialog blocks evaluate until timeout).
+const diag = createDiag({
+  sendCommand: (...args) => cdpSend(...args),
+});
+const log = diag.log;
+const lastDialogs = diag.dialogs;
 
 // ---------------- CDP transport ----------------
 // Implemented in lib/cdp-transport.js: hard sendCommand timeouts, the
@@ -113,39 +113,8 @@ const stopCapture = capture.stop;
 // (routed to the owning socket); all other events only maintain local state.
 chrome.debugger.onEvent.addListener((source, method, params) => {
   const tabId = attach.tabIdForSource(source);
-  if (method === "Page.javascriptDialogOpening" && tabId != null) {
-    // A native dialog blocks evaluate until timeout; answer it immediately
-    // (accept = OK for alert/confirm/prompt, leave for beforeunload) and record
-    // it for diag (alert/confirm/prompt all accept = OK, beforeunload = leave).
-    lastDialogs.set(tabId, {
-      type: params?.type || "",
-      message: String(params?.message || "").slice(0, 200),
-      ts: Date.now(),
-    });
-    if (lastDialogs.size > 50)
-      lastDialogs.delete(lastDialogs.keys().next().value);
-    log("warn", "page dialog opening — auto-accept", {
-      tabId,
-      type: params?.type,
-      message: params?.message,
-    });
-    const tgt =
-      source?.tabId != null
-        ? { tabId: source.tabId }
-        : source?.targetId
-          ? { targetId: source.targetId }
-          : null;
-    if (tgt) {
-      cdpSend(
-        tgt,
-        "Page.handleJavaScriptDialog",
-        { accept: true, promptText: String(params?.defaultPrompt || "") },
-        5000,
-      ).catch((e) =>
-        log("warn", "auto-accept dialog failed", { error: String(e) }),
-      );
-    }
-  }
+  // Dialog handling first: it may answer the page before capture routing.
+  diag.onCdpEvent({ source, tabId, method, params });
   // Forward to agents subscribed to this tab's CDP events (capture session).
   capture.pushEvent(tabId, method, params);
 });
@@ -175,7 +144,6 @@ const { execAgentCmd } = createCommandExecutor({
   lockMsForCdp,
   log,
   lastDialogs,
-  logBuf,
   clientLeases,
   agentWsPortsUp: (...args) => agentWsPortsUp(...args),
 });
@@ -294,5 +262,6 @@ if (typeof module !== "undefined" && module.exports) {
     stopCapture,
     disconnectClient,
     loadBridgeToken,
+    diag,
   };
 }

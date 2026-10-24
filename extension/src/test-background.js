@@ -832,6 +832,19 @@ async function main() {
     assert.strictEqual(sock.closed, true);
     assert.strictEqual(sock.frames.length, 0);
   });
+
+  // N. A page dialog must be recorded (and answered) instead of blocking
+  //    evaluate until the timeout; diag owns that behaviour now.
+  await ok("page dialog is recorded and auto-accepted", async () => {
+    const listener = dbg.api.onEvent.listeners[0];
+    listener({ tabId: 600 }, "Page.javascriptDialogOpening", {
+      type: "alert",
+      message: "hi",
+    });
+    await tick();
+    assert.ok(handle.diag.dialogs.has(600), "dialog recorded for tab 600");
+    assert.strictEqual(handle.diag.dialogs.get(600).message, "hi");
+  });
   console.log("\nALL-BACKGROUND-OK (" + passed + " cases)");
   process.exit(0);
 }
