@@ -1,23 +1,26 @@
 "use strict";
-// Capture 会话：让 agent 订阅某个 tab 上若干 CDP 域的事件。
+// Capture sessions: let an agent subscribe to CDP domain events on one tab.
 //
-//   capture.start → 对目标 Domain.enable，chrome.debugger.onEvent 匹配到的事件
-//                   以 {type:"event.push"} 定向推给【发起捕获的那条 socket】；
-//   capture.stop  → 停止转发 + 尽力 Domain.disable。
+//   capture.start → enable the domains; matching chrome.debugger.onEvent
+//                   events are pushed as {type:"event.push"} to the socket
+//                   that started the capture;
+//   capture.stop  → stop forwarding and best-effort Domain.disable.
 //
-// 用途：agent 在首屏加载/重新触发期间收集 Network.requestWillBeSent /
-// responseReceived / loadingFinished，再逐条 Network.getResponseBody 拿响应体
-// —— 比 DOM 高效得多的数据源（结构化、含站点自签名 API 响应）。
+// Use case: collect Network.requestWillBeSent / responseReceived /
+// loadingFinished during first paint or a re-trigger, then fetch each body
+// via Network.getResponseBody — a far better data source than the DOM
+// (structured, and it includes the site's own signed API responses).
 //
-// 设计要点（从 background.js 原样搬出，行为未改）：
-//   - capture 是独立租约：停一个 capture 不能释放 client 的显式/CDP 租约，
-//     也不能 disable 别的 capture 还在用的 domain（usesDomain 判断）。
-//   - 每个 capture 有 durationMs 定时器，到点自动 stop。
-//   - stop 在 tab 锁内执行，且"不重新 attach 已关闭/已 detach 的 target"。
+// Design notes (moved verbatim from background.js; behaviour unchanged):
+//   - a capture is an independent lease: stopping one must not release the
+//     client's explicit/CDP lease and must not disable a domain another
+//     capture still uses (see usesDomain);
+//   - every capture has a durationMs timer that stops it automatically;
+//   - stop runs under the tab lock and never re-attaches a closed/detached target.
 //
-// 依赖注入：所有 chrome/CDP/锁相关能力由外部给（见 createCaptureStore 的参数），
-// 这样本模块在 node 里可以直接用 mock 测。
-// 交付形态：经典脚本（importScripts 加载），同时挂 globalThis 与 module.exports。
+// Everything chrome/CDP/lock related is injected (see createCaptureStore), so
+// the module is testable in node with mocks. Shipped as a classic script:
+// exports are attached to both globalThis and module.exports.
 
 function createCaptureStore(deps = {}) {
   const log = deps.log || (() => {});
@@ -55,7 +58,7 @@ function createCaptureStore(deps = {}) {
       s.clientId,
       async () => {
         try {
-          // 清理绝不能重新 attach 一个已关闭、或已被显式 detach 的 target。
+          // Cleanup must never re-attach a closed or explicitly detached target.
           const st = getAttachedState(s.tabId);
           if (st?.attached) {
             const target = st.targetId
@@ -86,7 +89,7 @@ function createCaptureStore(deps = {}) {
     }
   }
 
-  // 返回 { started, captureId, tabId, domains, durationMs }；失败时回滚已 enable 的域。
+  // Returns {started, captureId, tabId, domains, durationMs}; rolls back enabled domains on failure.
   async function start(args, clientId, ctx) {
     const { tabId, domains, durationMs } = args || {};
     if (!Number.isInteger(tabId)) throw new Error("capture.start: need integer tabId");
@@ -173,7 +176,7 @@ function createCaptureStore(deps = {}) {
     );
   }
 
-  // capture.stop：按 captureId 或 tabId+clientId(+ws) 定位会话。
+  // capture.stop: locate the session by captureId or by tabId+clientId (+ws).
   async function stopByArgs(args, clientId, ctx) {
     const { tabId, captureId } = args || {};
     const sess = captureId
@@ -192,7 +195,7 @@ function createCaptureStore(deps = {}) {
     return stop(sess.captureId);
   }
 
-  // CDP 事件 → 定向推给发起捕获的那条 socket（socket 断开时会话已被清理）。
+  // CDP event → push to the socket that started the capture (already cleaned up on close).
   function pushEvent(tabId, method, params) {
     if (tabId == null) return 0;
     let pushed = 0;

@@ -1,14 +1,15 @@
 "use strict";
-// CDP 传输层：把 chrome.debugger.sendCommand 包成有超时、可重试的原语。
+// CDP transport: chrome.debugger.sendCommand wrapped into timed, retryable primitives.
 //
-// 抽出来的理由：这三件事和"业务命令"无关，任何 CDP 客户端都需要
-//   1) 每次 sendCommand 都有硬超时（挂着不返回的 CDP 调用会永久占住 tab 锁）
-//   2) Runtime.evaluate 超时按"页面弹窗"处理，等一次再试（T-30 实测弹窗 ~5s 自愈）
-//   3) 锁超时必须覆盖最坏重试路径（lockMsForCdp），否则锁先超时、命令还在跑
-//   4) 等标签加载完成（open/navigate 后立刻 run 会拿到空 DOM）
+// Extracted because none of this is business logic — every CDP client needs it:
+//   1) a hard timeout per sendCommand (a hanging call would hold the tab lock
+//      forever);
+//   2) Runtime.evaluate timeouts treated as a page dialog, retried once after a wait;
+//   3) a lock budget that covers the worst retry path (lockMsForCdp);
+//   4) waiting for the tab to finish loading (an immediate run sees an empty DOM).
 //
-// 依赖注入：chromeApi + log 都从外部给，方便在 node 里用 mock 跑单测。
-// 交付形态：经典脚本（importScripts 加载），同时挂 globalThis 与 module.exports。
+// chromeApi and log are injected so the module is unit-testable in node.
+// Shipped as a classic script; exports also land on globalThis and module.exports.
 
 function createCdpTransport(options = {}) {
   const chromeApi = options.chromeApi || chrome;
@@ -17,8 +18,9 @@ function createCdpTransport(options = {}) {
   const DIALOG_RETRY_WAIT_MS = options.dialogRetryWaitMs || 6000;
   const DEFAULT_TIMEOUT_MS = options.defaultTimeoutMs || 15000;
 
-  // cdpSend 把任意 Domain.method 原样转发给已附加的 tab：不设域白名单、不设方法
-  // 黑名单，扩展是"全量透传"。唯一保留的结构性校验：method 必须是非空字符串。
+  // send forwards any Domain.method straight to the attached tab: no domain
+  // allow-list, no method block-list — the extension is a full CDP passthrough.
+  // The only structural guard left: method must be a non-empty string.
   function methodAllowed(method) {
     if (typeof method !== "string" || !method) {
       throw new Error(
@@ -34,7 +36,7 @@ function createCdpTransport(options = {}) {
       typeof target?.targetId === "string"
         ? { targetId: target.targetId }
         : target; // { tabId } form
-    // 把 CDP 调用和真实定时器赛跑：挂起的 sendCommand 不能把 tab 锁永占。
+    // Race the CDP call against a real timer: a hanging sendCommand must not hold the lock.
     let timerId;
     const timeout = new Promise((_, rej) => {
       timerId = setTimeout(
@@ -68,7 +70,7 @@ function createCdpTransport(options = {}) {
           return await sendOnce(target, method, params, timeoutMs);
         } catch (e2) {
           throw new Error(
-            "Runtime.evaluate 超时两次（疑似页面原生弹窗卡住该标签）——close 该 tab 或人工处理弹窗后重试：" +
+            "Runtime.evaluate timed out twice (a native page dialog is likely blocking this tab) — close the tab or dismiss the dialog and retry: " +
               String((e2 && e2.message) || e2),
           );
         }
@@ -77,17 +79,18 @@ function createCdpTransport(options = {}) {
     }
   }
 
-  // 锁超时：锁必须活得比 CDP 调用久；Runtime.evaluate 有弹窗重试，
-  // 最坏 2×timeoutMs+6s，其余 1×timeoutMs+5s。
+  // Lock budget: the lock must outlive the CDP call. Runtime.evaluate has the
+  // dialog retry (worst case 2×timeoutMs + 6s); everything else 1×timeoutMs + 5s.
   function lockMsForCdp(cdpTimeoutMs, method) {
     return method === "Runtime.evaluate"
       ? 2 * cdpTimeoutMs + DIALOG_RETRY_WAIT_MS + 5000
       : cdpTimeoutMs + 5000;
   }
 
-  // 轮询标签加载完成（T-30：open/navigate 不等 load，慢站立刻 run 拿到空 DOM）。
-  // status=complete 即返回 loaded:true；waitMs 到点放行（loaded:false）；标签被
-  // 关也放行（gone:true）。waitMs<=0 跳过轮询。
+  // Poll until the tab finishes loading (T-30: open/navigate do not wait for
+  // load, so a slow site returns an empty DOM on an immediate run).
+  // status=complete returns loaded:true; the waitMs deadline returns loaded:false;
+  // a closed tab returns gone:true. waitMs<=0 skips the polling entirely.
   async function waitTabComplete(tabId, waitMs) {
     if (!Number.isFinite(waitMs) || waitMs <= 0)
       return { loaded: false, waitMs: 0 };

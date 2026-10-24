@@ -72,14 +72,14 @@ function makeDebugger() {
         return new Promise(() => {});
       }
       if (method === "Runtime.evaluate") {
-        // 按模板特征返回 canned 值。注意 click/type 共用同一 IIFE（含双分支），
-        // 用尾参的 act 字面量（,"click", / ,"type",）区分；snapshot 有独有串。
+        // Return canned values by template signature. click/type share one IIFE (with two
+        // branches), told apart by the trailing act literal (,"click", / ,"type",); snapshot has its own marker.
         const expr = (params && params.expression) || "";
         let val;
         if (expr.indexOf("total:nodes.length") !== -1) {
           val = JSON.stringify({ url: "https://x/", ts: 1, total: 1, count: 1, items: [{ i: 0, tag: "input", role: "", label: "q" }] });
         } else if (expr.indexOf(',"click",') !== -1) {
-          val = JSON.stringify({ found: true, clicked: "搜索", rect: [0, 0] });
+          val = JSON.stringify({ found: true, clicked: "search", rect: [0, 0] });
         } else if (expr.indexOf(',"type",') !== -1) {
           val = JSON.stringify({ found: true, typed: "hi" });
         } else {
@@ -166,16 +166,16 @@ function loadBackground(mock) {
   };
   const handle = require(bgPath);
   mock.fireInstalled(); // -> onInstalled (now dials the WS bridge; no-ops in node mock)
-  // 生产里已没有 native messaging 通道；测试用 execAgentCmd 直接注入命令，
-  // 由下面的 sendCmd 复现 agent.cmd / diag 的信封语义。
+  // Production has no native messaging channel any more; these tests inject commands
+  // straight into execAgentCmd, and sendCmd below replays the agent.cmd / diag envelope.
   mock.port.__handle = handle;
   mock.handle = handle; // expose the module handle (captureSessions, agentWs, execAgentCmd)
   return mock;
 }
 
-// ---------------- 命令注入（替代已删除的 native 通道） -------------------
-// 复现旧通道的信封语义：agent.cmd → {type:"agent.result", ok, result|error}；
-// diag → {type:"diag", ...payload}。生产端不再有 native port，测试直接调 execAgentCmd。
+// ---------------- command injection (replaces the removed native channel) ----------------
+// Replay the old channel envelope: agent.cmd → {type:"agent.result", ok, result|error};
+// diag → {type:"diag", ...payload}. There is no native port any more; tests call execAgentCmd.
 function sendCmd(port, msg) {
   const handle = port.__handle;
   const isDiag = msg.type === "diag";
@@ -422,31 +422,31 @@ async function main() {
     handle.agentWs.delete(port);
   });
 
-  // K. 索引化动作空间（jev 引入）：snapshot/click-el/type-el 命令分发 +
-  //    模板语法自检 + 参数校验。mock 的 Runtime.evaluate 按模板特征返回 canned 值。
+  // K. Indexed action space: snapshot/click-el/type-el dispatch, template
+  //    syntax self-check and argument validation. The mock returns canned values by signature.
   await ok("indexed action space: snapshot/click-el/type-el dispatch + template syntax", async () => {
-    // 1) 模板编译自检（模板串坏了在这里炸，到不了页面）
+    // 1) Template compiles (a broken template fails here, never reaching the page)
     const snapSrc = handle.snapshotExpr(5);
-    const clickSrc = handle.actExpr({ i: 0, tag: "a", label: "搜索" }, "click", "");
+    const clickSrc = handle.actExpr({ i: 0, tag: "a", label: "search" }, "click", "");
     const typeSrc = handle.actExpr({ i: 1, tag: "input", label: "" }, "type", "__CLEAR__hi");
     for (const src of [snapSrc, clickSrc, typeSrc]) {
-      new Function(src); // 仅语法编译；IIFE 作为函数体合法
+      new Function(src); // syntax compile only: an IIFE is a legal function body
     }
     assert.ok(snapSrc.indexOf("total:nodes.length") >= 0, "snapshot template walks the DOM");
 
-    // 2) snapshot 分发：canned 索引被 JSON.parse 回对象
+    // 2) snapshot dispatch: the canned index is JSON.parse'd back into an object
     const res = await handle.execAgentCmd("snapshot", { tabId: 1, max: 5 }, "snapper");
     assert.ok(res && Array.isArray(res.items) && res.items.length === 1, "snapshot returns parsed items: " + JSON.stringify(res));
 
-    // 3) click-el：canned found 结果透传
-    const cr = await handle.execAgentCmd("click-el", { tabId: 1, el: { i: 0, tag: "a", label: "搜索" } }, "snapper");
-    assert.ok(cr && cr.found === true && cr.clicked === "搜索", "click-el returns found result: " + JSON.stringify(cr));
+    // 3) click-el: the canned found result is passed through
+    const cr = await handle.execAgentCmd("click-el", { tabId: 1, el: { i: 0, tag: "a", label: "search" } }, "snapper");
+    assert.ok(cr && cr.found === true && cr.clicked === "search", "click-el returns found result: " + JSON.stringify(cr));
 
-    // 4) type-el：canned typed 结果透传
+    // 4) type-el: the canned typed result is passed through
     const tr = await handle.execAgentCmd("type-el", { tabId: 1, el: { i: 1, tag: "input", label: "" }, text: "hi", clear: true }, "snapper");
     assert.ok(tr && tr.found === true && tr.typed === "hi", "type-el returns typed result: " + JSON.stringify(tr));
 
-    // 5) 参数校验：缺 el.i / 缺 text / 缺 tabId 都拒绝
+    // 5) Validation: missing el.i / text / tabId are all rejected
     await assert.rejects(handle.execAgentCmd("click-el", { tabId: 1, el: { label: "x" } }, "snapper"), /click-el/);
     await assert.rejects(handle.execAgentCmd("type-el", { tabId: 1, el: { i: 0 } }, "snapper"), /type-el/);
     await assert.rejects(handle.execAgentCmd("snapshot", { max: 5 }, "snapper"), /tabId/);
@@ -564,9 +564,9 @@ async function main() {
   });
 
   await ok("extension always uses the built-in identifier and rejects a false server proof", async () => {
-    // 鉴权标识是两侧内置常量：storage 里的值不再参与（配对 UI 已移除）。
+    // The auth token is a built-in constant on both sides: storage no longer participates.
     const token = WSAuth.DEFAULT_TOKEN;
-    mock.chrome.storage.local._d.wbBridgeToken = "ab".repeat(32); // 应被忽略
+    mock.chrome.storage.local._d.wbBridgeToken = "ab".repeat(32); // must be ignored
     await handle.loadBridgeToken();
     const frames = [];
     const sock = { readyState: 1, close() { this.closed = true; }, send(raw) { frames.push(JSON.parse(raw)); } };
@@ -668,9 +668,9 @@ async function main() {
       await handle.loadBridgeToken();
       await handle.connectAgentWs();
       assert.strictEqual(sockets.length, 20, "unpaired worker dials with the default key");
-      // 鉴权标识是内置常量：storage 里有值也不参与。
+      // The token is a built-in constant: a storage value must not participate.
       const token = WSAuth.DEFAULT_TOKEN;
-      mock.chrome.storage.local._d.wbBridgeToken = "cd".repeat(32); // 应被忽略
+      mock.chrome.storage.local._d.wbBridgeToken = "cd".repeat(32); // must be ignored
       await handle.loadBridgeToken();
       await handle.connectAgentWs();
       assert.strictEqual(sockets.length, 20);
@@ -695,7 +695,7 @@ async function main() {
     }
   });
 
-  // T-30 修复回归：open 默认等 load（mock tabs.get 恒返 complete → loaded:true）。
+  // T-30 regression: open waits for load by default (mock tabs.get always returns complete).
   await ok("open waits for tab load and reports loaded flag", async () => {
     const r = await handle.execAgentCmd("open", { url: "https://x/" }, "opener");
     assert.strictEqual(r.opened, true);
@@ -703,7 +703,7 @@ async function main() {
     assert.strictEqual(r.tabId, 777);
   });
 
-  // T-30 修复回归：snapshot/act 收集器递归 open shadowRoot，shadow 内控件可枚举可点。
+  // T-30 regression: the snapshot/act collector recurses into open shadowRoots.
   await ok("snapshot and click-el pierce open shadow roots", () => {
     let clicks = 0;
     const btn = {

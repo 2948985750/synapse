@@ -22,11 +22,14 @@ agent 侧（synapse-skill 仓库的 agent/）
 | 路径 | 内容 |
 |---|---|
 | `extension/manifest.json` | MV3 清单（名称、权限、service worker 入口） |
-| `extension/src/background.js` | 控制面：`chrome.debugger` attach/透传、WS 拨入、tab 锁、sidePanel RPC |
+| `extension/src/background.js` | 接线层：装配下面这些 manager、WS 拨入、sidePanel RPC、生命周期监听 |
 | `extension/src/tablock.js` | 同 tab 串行化（FIFO + 超时） |
 | `extension/src/lib/page-actions.js` | 页内动作空间表达式（snapshot 枚举 / click / type），纯字符串、不碰 `chrome.*` |
 | `extension/src/lib/cdp-transport.js` | CDP 传输层：`sendCommand` 硬超时、`Runtime.evaluate` 弹窗重试、锁预算、等加载完成 |
 | `extension/src/lib/capture-store.js` | capture 会话：domain 复用判断、定时停止、事件定向推送 |
+| `extension/src/lib/attach.js` | attach 状态：`tabs`/`targetByTab`、attach/detach、收养 SW 重启后残留的 debugger 会话 |
+| `extension/src/lib/leases.js` | 租约与 tab 锁：client 租约集合、`hasTabLease`、`beginCommand`、`withTabLock` |
+| `extension/src/lib/commands.js` | 命令执行器：`tabs`/`open`/`snapshot`/`click-el`/`capture.*`/`cdp`/`run` 等全部命令（依赖注入） |
 | `extension/src/ws-auth.js` | 浏览器侧 HMAC 挑战/证明（协议 `wb-cdp-ws/2`） |
 | `extension/src/content.js` | 页内辅助（`isTrusted` 事件、shadow DOM 穿透） |
 | `extension/src/sidepanel/` | 侧边栏 UI（标签、诊断、CDP 调用） |

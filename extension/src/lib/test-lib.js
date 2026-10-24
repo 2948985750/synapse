@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 "use strict";
-// lib/ 三个模块的独立测试：不加载 background.js，直接用 mock 验证。
+// Standalone tests for the three lib modules: no background.js, just mocks.
 //   node extension/src/lib/test-lib.js
 const assert = require("assert");
 const vm = require("vm");
@@ -60,7 +60,7 @@ async function main() {
   console.log("lib (page-actions / cdp-transport / capture-store)");
 
   // ---------------- page-actions ----------------
-  await ok("snapshotExpr 枚举出索引、tag 与 label", () => {
+  await ok("snapshotExpr enumerates index, tag and label", () => {
     const page = fakePage();
     page.__elNodes = null;
     const out = JSON.parse(vm.runInNewContext(snapshotExpr(5), page));
@@ -70,28 +70,28 @@ async function main() {
     assert.strictEqual(out.items[0].label, "q");
   });
 
-  await ok("actExpr 命中索引时执行 click", () => {
+  await ok("actExpr clicks the element at the given index", () => {
     const page = fakePage();
     const r = JSON.parse(vm.runInNewContext(actExpr({ i: 0 }, "click", ""), page));
     assert.strictEqual(r.found, true);
     assert.strictEqual(inputEl.clicked, true);
   });
 
-  await ok("actExpr 索引越界 / label 漂移都拒绝执行", () => {
+  await ok("actExpr refuses an out-of-range index and a drifted label", () => {
     const p1 = fakePage();
     const r1 = JSON.parse(vm.runInNewContext(actExpr({ i: 9 }, "click", ""), p1));
     assert.strictEqual(r1.found, false);
-    assert.match(r1.reason, /索引越界/);
+    assert.match(r1.reason, /out of range/);
     const p2 = fakePage();
-    const r2 = JSON.parse(vm.runInNewContext(actExpr({ i: 0, label: "别的" }, "click", ""), p2));
+    const r2 = JSON.parse(vm.runInNewContext(actExpr({ i: 0, label: "other" }, "click", ""), p2));
     assert.strictEqual(r2.found, false);
-    assert.match(r2.reason, /label 漂移/);
+    assert.match(r2.reason, /label drift/);
   });
 
   // ---------------- cdp-transport ----------------
   const makeChrome = (impl) => ({ debugger: { sendCommand: impl }, tabs: { get: async () => ({ status: "complete" }) } });
 
-  await ok("send 超时抛出 CDP timeout，并清掉定时器", async () => {
+  await ok("send raises CDP timeout and clears the timer", async () => {
     const t = createCdpTransport({
       chromeApi: makeChrome(() => new Promise(() => {})),
       log: () => {},
@@ -101,7 +101,7 @@ async function main() {
     await assert.rejects(() => t.send({ tabId: 1 }, "Page.navigate", {}, 30), /CDP timeout/);
   });
 
-  await ok("Runtime.evaluate 超时按弹窗重试一次（共 2 次调用）", async () => {
+  await ok("Runtime.evaluate timeout retries once as a dialog (2 calls)", async () => {
     let calls = 0;
     const t = createCdpTransport({
       chromeApi: makeChrome(async () => {
@@ -111,19 +111,19 @@ async function main() {
       log: () => {},
       dialogRetryWaitMs: 5,
     });
-    await assert.rejects(() => t.send({ tabId: 1 }, "Runtime.evaluate", {}, 20), /弹窗|timeout/);
+    await assert.rejects(() => t.send({ tabId: 1 }, "Runtime.evaluate", {}, 20), /dialog|timeout/);
     assert.strictEqual(calls, 2);
   });
 
-  await ok("lockMsForCdp 覆盖弹窗重试的最坏路径", () => {
+  await ok("lockMsForCdp covers the worst-case retry path", () => {
     const t = createCdpTransport({ chromeApi: makeChrome(async () => ({})), log: () => {} });
     const ev = t.lockMsForCdp(15000, "Runtime.evaluate");
     const other = t.lockMsForCdp(15000, "Page.navigate");
-    assert.ok(ev > other, "evaluate 的锁必须比普通命令更久");
-    assert.ok(ev >= 2 * 15000 + 5000, "覆盖 2×timeout + 重试等待");
+    assert.ok(ev > other, "the evaluate lock must outlast a plain command");
+    assert.ok(ev >= 2 * 15000 + 5000, "covers 2×timeout plus the retry wait");
   });
 
-  await ok("waitTabComplete: complete 即返回 loaded，waitMs<=0 直接跳过", async () => {
+  await ok("waitTabComplete returns loaded on complete and skips when waitMs<=0", async () => {
     const t = createCdpTransport({ chromeApi: makeChrome(async () => ({})), log: () => {} });
     assert.deepStrictEqual(await t.waitTabComplete(1, 0), { loaded: false, waitMs: 0 });
     const r = await t.waitTabComplete(1, 1000);
@@ -153,7 +153,7 @@ async function main() {
     };
   };
 
-  await ok("start 返回 captureId，并把它放进 sessions", async () => {
+  await ok("start returns a captureId and registers the session", async () => {
     const deps = makeDeps();
     const store = createCaptureStore(deps);
     const r = await store.start({ tabId: 1, domains: ["Network"], durationMs: 1000 }, "c1", { ws: { readyState: 1 } });
@@ -162,7 +162,7 @@ async function main() {
     assert.strictEqual(store.sessions.get(r.captureId).tabId, 1);
   });
 
-  await ok("同一 tab+client 不允许并发 start", async () => {
+  await ok("a second start for the same tab+client is rejected", async () => {
     const deps = makeDeps();
     const store = createCaptureStore(deps);
     const ctx = { ws: { readyState: 1 } };
@@ -170,12 +170,12 @@ async function main() {
     await assert.rejects(() => store.start({ tabId: 1, durationMs: 1000 }, "c1", ctx), /already active/);
   });
 
-  await ok("没有 WS 上下文时拒绝 start（只支持 WS 通道）", async () => {
+  await ok("start without a WS context is rejected (WS-only channel)", async () => {
     const store = createCaptureStore(makeDeps());
     await assert.rejects(() => store.start({ tabId: 1 }, "c1", {}), /WS channel only/);
   });
 
-  await ok("stop 会 disable 未被其它 capture 复用的 domain", async () => {
+  await ok("stop disables a domain no other capture still uses", async () => {
     const deps = makeDeps();
     const store = createCaptureStore(deps);
     const r = await store.start({ tabId: 1, domains: ["Network"], durationMs: 1000 }, "c1", { ws: { readyState: 1 } });
@@ -184,19 +184,19 @@ async function main() {
     assert.strictEqual(store.size(), 0);
   });
 
-  await ok("同一 tab 上两个 capture 共用 Network 时，先停的那个不 disable", async () => {
+  await ok("two captures sharing Network on one tab: the first stop does not disable", async () => {
     const deps = makeDeps();
     const store = createCaptureStore(deps);
     const ctx = { ws: { readyState: 1 } };
     const a = await store.start({ tabId: 1, domains: ["Network"], durationMs: 1000 }, "c1", ctx);
     const b = await store.start({ tabId: 1, domains: ["Network"], durationMs: 1000 }, "c2", ctx);
     await store.stop(a.captureId);
-    assert.deepStrictEqual(deps._disabled, [], "另一个 capture 还在用同一个 tab 的 Network");
+    assert.deepStrictEqual(deps._disabled, [], "another capture still uses Network on this tab");
     await store.stop(b.captureId);
     assert.deepStrictEqual(deps._disabled, ["Network.disable"]);
   });
 
-  await ok("pushEvent 只推给发起方，且只在 readyState=1 时发", async () => {
+  await ok("pushEvent only reaches the owner and only while readyState=1", async () => {
     const sent = [];
     const deps = makeDeps();
     const store = createCaptureStore(deps);
@@ -207,10 +207,10 @@ async function main() {
     assert.strictEqual(sent[0].type, "event.push");
     assert.strictEqual(sent[0].captureId, r.captureId);
     store.pushEvent(7, "Page.frameNavigated", {});
-    assert.strictEqual(sent.length, 1, "不在订阅域内的事件不推");
+    assert.strictEqual(sent.length, 1, "events outside the subscribed domains are not pushed");
     ws.readyState = 3;
     store.pushEvent(7, "Network.loadingFinished", { requestId: "r2" });
-    assert.strictEqual(sent.length, 1, "socket 已关不推");
+    assert.strictEqual(sent.length, 1, "nothing is pushed once the socket closed");
   });
 
   console.log("ALL-LIB-OK (" + passed + " cases)");
