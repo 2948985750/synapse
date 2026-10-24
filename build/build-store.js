@@ -23,6 +23,21 @@ const INCLUDE = [
   "src/sidepanel/panel.js",
 ];
 
+// importScripts 的路径必须一起进包，否则装上去就是"模块找不到"。
+// 从 background.js 现场解析，避免以后加模块忘了改这张清单。
+const bgSource = fs.readFileSync(path.join(EXT, "src/background.js"), "utf8");
+const importMatch = bgSource.match(/importScripts\(([\s\S]*?)\);/);
+if (!importMatch) {
+  console.error("background.js 里没有 importScripts，构建中止（清单无法自校验）");
+  process.exit(1);
+}
+const imported = [...importMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+for (const rel of imported) {
+  const normalized = "src/" + rel.replace(/^\.\//, "");
+  if (!INCLUDE.includes(normalized)) INCLUDE.push(normalized);
+}
+
+
 // 清理旧的 dist
 fs.rmSync(DIST, { recursive: true, force: true });
 fs.mkdirSync(DIST, { recursive: true });
