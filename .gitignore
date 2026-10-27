@@ -16,3 +16,5 @@ build/*.zip
 # 系统垃圾
 .DS_Store
 Thumbs.db
+
+extension/store/*.zip
