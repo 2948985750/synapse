@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Synapse",
   "version": "0.15.1",
-  "description": "Drive your logged-in browser from an AI agent over a secure local bridge: read pages, fill forms, capture network. No cloud, no telemetry.",
+  "description": "Drive your logged-in browser from an AI agent over a local bridge: read pages, fill forms, capture network. No cloud, no telemetry.",
   "minimum_chrome_version": "116",
   "background": {
     "service_worker": "src/background.js"

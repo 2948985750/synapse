@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synapse — Privacy Policy</title>
+<style>
+  :root { --ink:#1e2340; --mut:#5b6178; --acc:#4338CA; }
+  body { font: 16px/1.65 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+         color: var(--ink); background:#f7f8fc; margin:0; }
+  main { max-width: 46rem; margin: 0 auto; padding: 3rem 1.5rem 4rem; background:#fff; min-height:100vh;
+         box-shadow: 0 0 40px rgba(30,35,64,.06); }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+  .sub { color: var(--mut); font-size: .9rem; margin-bottom: 1.5rem; }
+  h2 { font-size: 1.05rem; margin: 1.6rem 0 .5rem; }
+  h2 .zh { color: var(--mut); font-weight: 400; font-size: .85rem; margin-left: .5rem; }
+  p { margin: .5rem 0; }
+  .key { background:#f1f1fb; border-left: 3px solid var(--acc); padding: .9rem 1.1rem; border-radius: 0 8px 8px 0; margin: 1rem 0; }
+  .zh-note { color: var(--mut); font-size: .85rem; }
+  footer { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid #e6e8f2; color: var(--mut); font-size: .8rem; }
+  code { background:#f1f1fb; padding: .1em .35em; border-radius: 4px; font-size: .88em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Synapse — Privacy Policy</h1>
+  <div class="sub">Browser extension · Last updated: 2026-10-19 · Version 0.15.1</div>
+
+  <div class="key">
+    <strong>Short answer: Synapse does not collect, transmit, store, or process any user data.</strong><br>
+    It has no servers, no analytics, and no network endpoints. Everything runs on your own machine.
+  </div>
+
+  <h2>What this extension does</h2>
+  <p>Synapse lets an AI coding agent <em>on your own computer</em> drive the browser you are already
+     logged into (open tabs, read the rendered page, click and type, capture the page's own network
+     responses). This is a local automation tool in the same category as browser devtools / CDP
+     drivers — it helps you automate <strong>your</strong> sessions on <strong>your</strong> machine.</p>
+
+  <h2>Data collection <span class="zh">数据收集</span></h2>
+  <p><strong>None.</strong> The extension makes no outbound network requests. It contains no analytics,
+     no advertising, no tracking, and no third-party SDKs. No information is sent to the developer
+     or any other party, ever.</p>
+
+  <h2>Local loopback only <span class="zh">仅限本机回环</span></h2>
+  <p>The extension can connect exclusively to <code>127.0.0.1</code> (your own machine), on ports
+     started by a local agent program <em>you</em> run (the "agent bridge", default range
+     <code>9521–9540</code>). No remote servers are contacted. If that local bridge is not running,
+     the extension stays completely quiet and inactive.</p>
+
+  <h2>Permissions and why</h2>
+  <ul>
+    <li><strong>debugger / tabs / &lt;all_urls&gt;</strong> — required to read and act on tabs you are
+        logged into, across any site, for the automation tasks you initiate.</li>
+    <li><strong>storage / alarms / sidePanel / tabGroups</strong> — local bookkeeping and the settings
+        panel; all state stays on your machine.</li>
+  </ul>
+
+  <h2>Your content, your business <span class="zh">页面内容</span></h2>
+  <p>While you run a task, page content (DOM, forms, network responses) is passed between the
+     extension and <em>your own</em> local agent process over loopback. It never leaves your machine
+     through this extension. What your agent program does with it is governed by that program's own
+     policies, not this extension's.</p>
+
+  <h2>Children, cookies, contact</h2>
+  <p>The extension does not knowingly collect information from children, does not use cookies or
+     trackers, and does not receive your data in any form. For questions: this extension is a
+     self-contained local tool; there is no data handling to inquire about.</p>
+
+  <footer>
+    中文摘要：本扩展<strong>不收集、不传输、不存储任何用户数据</strong>；没有任何服务端、
+    无遥测、无第三方 SDK。它只与你自己在本机启动的 agent 程序通过回环地址（127.0.0.1）通信；
+    未启动本地桥时扩展完全静默。页面内容仅在你本机内于扩展与你的 agent 之间流转，
+    绝不通过本扩展离开你的电脑。<br><br>
+    Synapse is a local browser-extension tool. This page is the public privacy policy
+    required for its Edge Add-ons listing.
+  </footer>
+</main>
+</body>
+</html>
