@@ -1,6 +1,6 @@
 # Synapse → Edge 插件市场提交记录
 
-> 生成日期：2026-10-19 ｜ 包：`extension/store/synapse-store.zip`（v0.15.1，11 条目，manifest 在根）
+> 生成日期：2026-10-19（2026-10-27 提交）｜包：`extension/store/synapse-0.15.1.zip`（19 条目，manifest 在根）
 > 重打包流程：`node gen-icons.js`（如需换图标）→ `node build-store.js` → PowerShell `Compress-Archive`
 > 图标：`icons/icon512.png` 用于商店页展示（不入 zip）。
 
@@ -50,10 +50,9 @@
 https://2948985750.github.io/synapse/
 ```
 
-- 公开仓库：（，Pages 源 main /docs）
-  **逐文件 Web UI 提交 + 启用 GitHub Pages**（main / 根目录）完成。
+- 公开仓库：https://github.com/2948985750/synapse（文件 `docs/index.html`，Pages 源 main /docs）。
 - 页面是零依赖单页（英文正文 + 中文摘要），源文件在
-  `extension/store/privacy-policy.html`，已用 `gen-icons` 同流程生成。
+  `extension/store/privacy-policy.html`。
 
 政策核心（页面已含全文）：本扩展**不收集/不传输/不存储任何数据**、无服务端、
 无遥测；仅与用户自己在本机启动的 agent 桥通过 127.0.0.1 回环通信。
@@ -84,8 +83,8 @@ https://2948985750.github.io/synapse/
 ## 5. 提交记录（2026-10-27）
 
 - 账号：个人主体 psn_b2unrtbb，发布者 **Synapse Labs**（Individual）
-- 包：（manifest description 已压到 132 字符内）
-- Store ID：；CRX ID：
+- 包：`extension/store/synapse-0.15.1.zip`（19 条目，manifest description 已压到 132 字符内）
+- Store ID：`0RDCK9Q0ZRPT`；CRX ID：`eiidjpnhaaiejgagkdanikjhbknmlplm`
 - 状态：**In review**（2026-10-27 提交，官方提示 7 个工作日内）
 - 列表：英文（美国），分类 Developer Tools，Public，全部 241 市场
 - 隐私表单：单用途 + 5 个权限理由 + 不收集数据 + 3 项认证；测试无需凭据
