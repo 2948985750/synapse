@@ -18,3 +18,6 @@ build/*.zip
 Thumbs.db
 
 extension/store/*.zip
+
+# 本机 agent 工作区
+.zcode/
