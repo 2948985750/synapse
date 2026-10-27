@@ -1,4 +1,4 @@
-# Synapse → Edge 插件市场提交包
+# Synapse → Edge 插件市场提交记录
 
 > 生成日期：2026-10-19 ｜ 包：`extension/store/synapse-store.zip`（v0.15.1，11 条目，manifest 在根）
 > 重打包流程：`node gen-icons.js`（如需换图标）→ `node build-store.js` → PowerShell `Compress-Archive`
@@ -47,12 +47,10 @@
 **已部署上线** ✅ —— 隐私政策 URL：
 
 ```
-https://2948985750.github.io/synapse-privacy/
+https://2948985750.github.io/synapse/
 ```
 
-- 公开仓库：`https://github.com/2948985750/synapse-privacy`
-  （文件 `index.html` = 政策页、`.nojekyll` = 禁用 Jekyll、`README.md`）
-- 由本 skill 的浏览器驱动（`agent-collect.js`）在已登录的 Edge 里
+- 公开仓库：（，Pages 源 main /docs）
   **逐文件 Web UI 提交 + 启用 GitHub Pages**（main / 根目录）完成。
 - 页面是零依赖单页（英文正文 + 中文摘要），源文件在
   `extension/store/privacy-policy.html`，已用 `gen-icons` 同流程生成。
@@ -83,7 +81,16 @@ https://2948985750.github.io/synapse-privacy/
 - **Q: native messaging？** 无原生 host、不打包任何本地程序；权限已从
   manifest 移除（v0.15.1）。
 
-## 5. 版本与维护约定
+## 5. 提交记录（2026-10-27）
+
+- 账号：个人主体 psn_b2unrtbb，发布者 **Synapse Labs**（Individual）
+- 包：（manifest description 已压到 132 字符内）
+- Store ID：；CRX ID：
+- 状态：**In review**（2026-10-27 提交，官方提示 7 个工作日内）
+- 列表：英文（美国），分类 Developer Tools，Public，全部 241 市场
+- 隐私表单：单用途 + 5 个权限理由 + 不收集数据 + 3 项认证；测试无需凭据
+
+## 6. 版本与维护约定
 
 - 商店版本号必须单调递增（`manifest.json` 0.15.1 → 下次 0.15.2+），
   **本地 unpacked 版与商店版共用同一份源码**：发布前先 bump 版本再打包。
